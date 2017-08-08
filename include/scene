@@ -1,0 +1,46 @@
+#ifndef _TRIPLET_MATCH_SCENE_
+#define _TRIPLET_MATCH_SCENE_
+
+#include <unordered_map>
+
+#include "common"
+#include "model"
+
+namespace triplet_match {
+
+template <typename Point>
+class scene {
+public:
+    typedef std::unique_ptr<scene<Point>> uptr_t;
+    typedef std::shared_ptr<scene<Point>> sptr_t;
+    typedef std::weak_ptr<scene<Point>> wptr_t;
+    typedef std::shared_ptr<const scene<Point>> const_sptr_t;
+    typedef std::weak_ptr<const scene<Point>> const_wptr_t;
+
+    typedef pcl::PointCloud<Point> cloud_t;
+
+public:
+    scene(typename cloud_t::ConstPtr cloud);
+
+    virtual ~scene();
+
+    template <typename PointModel, typename Rejector>
+    mat4f_t
+    find(model<PointModel>& m, Rejector&& reject);
+
+    template <typename PointModel, typename Rejector>
+    mat4f_t
+    find(model<PointModel>& m, Rejector&& reject, const subset_t& subset);
+
+protected:
+    struct impl;
+    std::unique_ptr<impl> impl_;
+
+};
+
+}  // namespace triplet_match
+
+#include "impl/scene.hpp"
+
+#endif /* _TRIPLET_MATCH_SCENE_ */
+// vim: syntax=cpp:

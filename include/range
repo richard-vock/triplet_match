@@ -1,0 +1,26 @@
+#ifndef _TRIPLET_MATCH_RANGE_
+#define _TRIPLET_MATCH_RANGE_
+
+#include <utility>
+
+namespace triplet_match {
+
+template <class Iter>
+class range : public std::pair<Iter, Iter> {
+	public:
+		range(const std::pair<Iter,Iter>& x);
+
+		virtual ~range();
+
+		Iter begin() const;
+
+		Iter end()   const;
+};
+
+} // triplet_match
+
+#include "impl/range.hpp"
+
+#endif /* _TRIPLET_MATCH_RANGE_ */
+
+// vim: syntax=cpp

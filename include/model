@@ -1,0 +1,57 @@
+#ifndef _TRIPLET_MATCH_MODEL_
+#define _TRIPLET_MATCH_MODEL_
+
+#include <unordered_map>
+
+#include "common"
+#include "range"
+#include "triplet_feature"
+
+namespace triplet_match {
+
+template <typename Point>
+class model {
+public:
+    typedef std::unique_ptr<model<Point>> uptr_t;
+    typedef std::shared_ptr<model<Point>> sptr_t;
+    typedef std::weak_ptr<model<Point>> wptr_t;
+    typedef std::shared_ptr<const model<Point>> const_sptr_t;
+    typedef std::weak_ptr<const model<Point>> const_wptr_t;
+
+    typedef pcl::PointCloud<Point> cloud_t;
+    typedef std::tuple<uint32_t, uint32_t, uint32_t> triplet_t;
+    typedef std::unordered_map<discrete_feature, triplet_t> hash_map_t;
+    typedef typename hash_map_t::const_iterator triplet_iter_t;
+
+public:
+    model(typename cloud_t::ConstPtr cloud, discretization_params params);
+
+    virtual ~model();
+
+    std::future<void>
+    init();
+
+    std::future<void>
+    init(const subset_t& subset);
+
+    template <typename PointQuery>
+    range<triplet_iter_t>
+    query(const PointQuery& p1, const PointQuery& p2, const PointQuery& p3);
+
+    float diameter() const;
+
+    typename cloud_t::ConstPtr cloud() const;
+
+protected:
+    struct impl;
+    std::unique_ptr<impl> impl_;
+
+};
+
+}  // namespace triplet_match
+
+#include "impl/model.hpp"
+
+#endif /* _TRIPLET_MATCH_MODEL_ */
+
+// vim: syntax=cpp

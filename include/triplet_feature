@@ -1,0 +1,24 @@
+#ifndef _TRIPLET_MATCH_TRIPLET_FEATURE_
+#define _TRIPLET_MATCH_TRIPLET_FEATURE_
+
+namespace triplet_match {
+
+struct discrete_feature : Eigen::Matrix<unsigned int, 6, 1> {
+};
+
+struct discretization_params {
+    float distance_step;
+    float angle_step;
+};
+
+template <typename Point>
+discrete_feature
+compute_discrete(const Point& p1, const Point& p2, const Point& p3, discretization_params params);
+
+} // triplet_match
+
+#include "impl/triplet_feature.hpp"
+
+#endif /* _TRIPLET_MATCH_TRIPLET_FEATURE_ */
+
+// vim: syntax=cpp
