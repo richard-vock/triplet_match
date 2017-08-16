@@ -22,7 +22,7 @@ int main (int argc, char const* argv[]) {
     // model
     std::cout << "init model" << "\n";
     std::unique_ptr<tr::model<point_t>> m(new tr::model<point_t>(model_cloud, dparams));
-    auto sync_model = m->init();
+    auto sync_model = m->init({0.2, 1.0, 0.9});
 
     std::cout << "init voxel" << "\n";
     vs::gpu_state::sptr_t gstate(new vs::gpu_state());
@@ -46,5 +46,5 @@ int main (int argc, char const* argv[]) {
             std::cout << max_score << "\n";
         }
         return true;
-    });
+    }, {0.2f, 1.0f, 0.9f, 1.f});
 }

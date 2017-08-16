@@ -29,16 +29,20 @@ public:
     virtual ~model();
 
     std::future<void>
-    init();
+    init(const sample_parameters& sample_params);
 
     std::future<void>
-    init(const subset_t& subset);
+    init(const subset_t& subset, const sample_parameters& sample_params);
 
     template <typename PointQuery>
-    range<triplet_iter_t>
+    std::pair<triplet_iter_t, triplet_iter_t>
     query(const PointQuery& p1, const PointQuery& p2, const PointQuery& p3);
 
     float diameter() const;
+
+    uint32_t point_count() const;
+
+    uint64_t triplet_count() const;
 
     typename cloud_t::ConstPtr cloud() const;
 
@@ -50,7 +54,9 @@ protected:
 
 }  // namespace triplet_match
 
+#ifndef TRIPLET_MATCH_PRECOMPILE_HEADERS
 #include "impl/model.hpp"
+#endif // TRIPLET_MATCH_PRECOMPILE_HEADERS
 
 #endif /* _TRIPLET_MATCH_MODEL_ */
 

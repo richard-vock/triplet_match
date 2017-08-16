@@ -3,7 +3,7 @@
 
 namespace triplet_match {
 
-struct discrete_feature : Eigen::Matrix<unsigned int, 6, 1> {
+struct discrete_feature : Eigen::Matrix<unsigned int, 5, 1> {
 };
 
 struct discretization_params {

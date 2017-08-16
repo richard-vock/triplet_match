@@ -24,13 +24,14 @@ public:
 
     virtual ~scene();
 
-    template <typename PointModel, typename Rejector>
-    mat4f_t
-    find(model<PointModel>& m, Rejector&& reject);
+    template <typename PointModel, typename ScoreFunctor>
+    mat4f_t find(model<PointModel>& m, ScoreFunctor&& score_func,
+                 const sample_parameters& sample_params);
 
-    template <typename PointModel, typename Rejector>
+    template <typename PointModel, typename ScoreFunctor>
     mat4f_t
-    find(model<PointModel>& m, Rejector&& reject, const subset_t& subset);
+    find(model<PointModel>& m, ScoreFunctor&& score_func,
+         const sample_parameters& sample_params, const subset_t& subset);
 
 protected:
     struct impl;
@@ -40,7 +41,10 @@ protected:
 
 }  // namespace triplet_match
 
+#include "scene.ipp"
+#ifndef TRIPLET_MATCH_PRECOMPILE_HEADERS
 #include "impl/scene.hpp"
+#endif // TRIPLET_MATCH_PRECOMPILE_HEADERS
 
 #endif /* _TRIPLET_MATCH_SCENE_ */
 // vim: syntax=cpp:

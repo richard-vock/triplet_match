@@ -8,13 +8,15 @@ struct model<Point>::impl {
     ~impl() {}
 
     std::future<void>
-    init(const subset_t& subset) {
+    init(const subset_t& subset, const sample_parameters& params) {
         if (subset.empty()) {
             subset_.resize(cloud_->size());
             std::iota(subset_.begin(), subset_.end(), 0u);
         } else {
             subset_ = subset;
         }
+
+        s_params_ = params;
 
         return std::async(std::launch::async, [&] () {
             this->build_model_();
@@ -37,6 +39,14 @@ struct model<Point>::impl {
         return diameter_;
     }
 
+    uint32_t point_count() const {
+        return point_count_;
+    }
+
+    uint64_t triplet_count() const {
+        return triplet_count_;
+    }
+
     typename cloud_t::ConstPtr cloud() const {
         return cloud_;
     }
@@ -44,25 +54,48 @@ struct model<Point>::impl {
     void
     build_model_() {
         bbox3_t bbox;
+        std::set<uint32_t> valid;
         for (uint32_t i : subset_) {
-            const Point& p1 = cloud_->points[i];
-            if (!pcl::isFinite(p1)) {
-                continue;
+            const Point& p = cloud_->points[i];
+            if (pcl::isFinite(p)) {
+                valid.insert(i);
+                bbox.extend(p.getVector3fMap());
             }
+        }
+        diameter_ = (bbox.max() - bbox.min()).norm();
 
-            bbox.extend(p1.getVector3fMap());
+        float lower = diameter_ * s_params_.min_diameter_factor;
+        float upper = diameter_ * s_params_.max_diameter_factor;
+        triplet_count_ = 0;
+        for (uint32_t i : valid) {
+            const Point& p1 = cloud_->points[i];
 
-            for (uint32_t j : subset_) {
+            for (uint32_t j : valid) {
                 const Point& p2 = cloud_->points[j];
-                if (i == j || !pcl::isFinite(p2)) {
+                if (i == j) {
                     continue;
                 }
 
-                for (uint32_t k : subset_) {
+                vec3f_t d1 = p2.getVector3fMap() - p1.getVector3fMap();
+                float dist1 = d1.norm();
+                d1 /= dist1;
+                if (dist1 < lower || dist1 > upper) {
+                    continue;
+                }
+
+                for (uint32_t k : valid) {
                     const Point& p3 = cloud_->points[k];
-                    if (i == k || j == k || !pcl::isFinite(p3)) {
+                    if (i == k || j == k) {
                         continue;
                     }
+
+                    vec3f_t d2 = (p3.getVector3fMap() - p1.getVector3fMap()).normalized();
+                    float orthogonality = 1.f - fabs(d2.dot(d1));
+                    if (orthogonality < s_params_.min_orthogonality) {
+                        continue;
+                    }
+
+                    ++triplet_count_;
 
                     discrete_feature df = compute_discrete<Point>(p1, p2, p3, params_);
 
@@ -71,7 +104,7 @@ struct model<Point>::impl {
             }
         }
 
-        diameter_ = (bbox.max() - bbox.min()).norm();
+        point_count_ = valid.size();
         init_ = true;
     }
 
@@ -80,8 +113,11 @@ struct model<Point>::impl {
     bool init_;
 
     subset_t subset_;
+    sample_parameters s_params_;
     hash_map_t map_;
     float diameter_;
+    uint32_t point_count_;
+    uint64_t triplet_count_;
 };
 
 
@@ -98,19 +134,19 @@ model<Point>::~model() {
 
 template <typename Point>
 inline std::future<void>
-model<Point>::init() {
-    return impl_->init(subset_t());
+model<Point>::init(const sample_parameters& sample_params) {
+    return impl_->init(subset_t(), sample_params);
 }
 
 template <typename Point>
 inline std::future<void>
-model<Point>::init(const subset_t& subset) {
-    return impl_->init(subset);
+model<Point>::init(const subset_t& subset, const sample_parameters& sample_params) {
+    return impl_->init(subset, sample_params);
 }
 
 template <typename Point>
 template <typename PointQuery>
-inline range<typename model<Point>::triplet_iter_t>
+inline std::pair<typename model<Point>::triplet_iter_t, typename model<Point>::triplet_iter_t>
 model<Point>::query(const PointQuery& p1, const PointQuery& p2, const PointQuery& p3) {
     return range<triplet_iter_t>(impl_->template query<PointQuery>(p1, p2, p3));
 }
@@ -119,6 +155,18 @@ template <typename Point>
 inline float
 model<Point>::diameter() const {
     return impl_->diameter();
+}
+
+template <typename Point>
+inline uint32_t
+model<Point>::point_count() const {
+    return impl_->point_count();
+}
+
+template <typename Point>
+inline uint64_t
+model<Point>::triplet_count() const {
+    return impl_->triplet_count();
 }
 
 template <typename Point>

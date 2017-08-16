@@ -14,6 +14,8 @@
 #include <pcl/point_types.h>
 #include <pcl/search/kdtree.h>
 
+#include "config"
+
 namespace triplet_match {
 
 typedef Eigen::Vector3f vec3f_t;
@@ -35,6 +37,13 @@ typedef Eigen::AlignedBox<float, 3> bbox3_t;
 typedef Eigen::Quaternionf quat_t;
 
 typedef std::vector<uint32_t> subset_t;
+
+struct sample_parameters {
+    float min_diameter_factor;
+    float max_diameter_factor;
+    float min_orthogonality;
+    float redundancy_factor;
+};
 
 } // triplet_match
 
