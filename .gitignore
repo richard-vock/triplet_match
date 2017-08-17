@@ -2,3 +2,4 @@ build
 *.dblite
 *.o
 *.so
+include/config
