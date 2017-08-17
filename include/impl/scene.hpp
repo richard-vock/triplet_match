@@ -1,5 +1,7 @@
 #include <random>
 #include <chrono>
+#include "timer.hpp"
+
 namespace triplet_match {
 
 namespace detail {
@@ -75,6 +77,7 @@ template <typename Point>
 template <typename PointModel>
 inline mat4f_t
 scene<Point>::impl::find(model<PointModel>& m, std::function<float (const mat4f_t&)> score_func, const sample_parameters& params, subset_t subset) {
+    auto timer = timer::start();
     pcl::IndicesPtr indices;
     if (subset.empty()) {
         indices = pcl::IndicesPtr(new std::vector<int>(cloud_->size()));
@@ -103,13 +106,15 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<float (const mat4f_
 
     uint32_t n_model = m.cloud()->size();
     uint32_t n_scene = indices->size();
-    //double neighborhood_size = static_cast<double>(n_scene);//3529;
     std::cout << "model size: " << n_model << "\n";
     std::cout << "scene size: " << n_scene << "\n";
     uint64_t cand_bound = 0;
     double neighborhood_size = 0.0;
     uint32_t first_points = 0;
 
+    uint64_t init_duration = timer->stop<std::chrono::milliseconds>();
+
+    timer->reset();
     bool stop = false;
     for (int i : *indices) {
         if (stop) {
@@ -175,12 +180,15 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<float (const mat4f_
             }
         }
     }
+    uint64_t sample_duration = timer->stop<std::chrono::milliseconds>();
 
     std::cout << "valid sample count: " << valid_sample_count << "\n";
     std::cout << "tried sample count: " << sample_count << "\n";
     std::cout << "important valid: " << last_important_valid_sample << "\n";
     std::cout << "important tried: " << last_important_sample << "\n";
     std::cout << "validity ratio: " << (static_cast<double>(valid_sample_count) / sample_count) << "\n";
+    std::cout << "init duration: " << init_duration << "ms\n";
+    std::cout << "sample duration: " << sample_duration << "ms\n";
     return best_transform.inverse();
 }
 
