@@ -46,6 +46,11 @@ public:
 
     typename cloud_t::ConstPtr cloud() const;
 
+#ifndef NDEBUG
+    void
+    write_octave_density_maps(const std::string& folder, const std::string& data_file_prefix, const std::string& script_file) const;
+#endif // NDEBUG
+
 protected:
     struct impl;
     std::unique_ptr<impl> impl_;

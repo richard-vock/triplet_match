@@ -82,7 +82,7 @@ angle(const Eigen::Vector3f& a, const Eigen::Vector3f& b) {
 
 template <typename Point>
 discrete_feature
-compute_discrete(const Point& p1, const Point& p2, const Point& p3, discretization_params params) {
+compute_discrete(const Point& p1, const Point& p2, const Point& p3, discretization_params params, float min_dist, float dist_range) {
     vec3f_t d1 = p2.getVector3fMap() - p1.getVector3fMap();
     vec3f_t d2 = p3.getVector3fMap() - p2.getVector3fMap();
     float f1 = d2.norm();
@@ -103,8 +103,10 @@ compute_discrete(const Point& p1, const Point& p2, const Point& p3, discretizati
     const float f5 = detail::angle(t3, -d3);
 
     discrete_feature feat;
-    feat[0] = static_cast<uint32_t>(f1 / params.distance_step);
-    feat[1] = static_cast<uint32_t>(f2 / params.distance_step);
+    feat[0] = static_cast<uint32_t>(((f1 - min_dist) / dist_range) * params.distance_step_count);
+    if (feat[0] == params.distance_step_count) --feat[0];
+    feat[1] = static_cast<uint32_t>(((f2 - min_dist) / dist_range) * params.distance_step_count);
+    if (feat[1] == params.distance_step_count) --feat[1];
     feat[2] = static_cast<uint32_t>(f3 / params.angle_step);
     feat[3] = static_cast<uint32_t>(f4 / params.angle_step);
     feat[4] = static_cast<uint32_t>(f5 / params.angle_step);

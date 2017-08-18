@@ -33,6 +33,8 @@ public:
     find(model<PointModel>& m, ScoreFunctor&& score_func,
          const sample_parameters& sample_params, const subset_t& subset);
 
+    typename cloud_t::ConstPtr cloud() const;
+
 protected:
     struct impl;
     std::unique_ptr<impl> impl_;

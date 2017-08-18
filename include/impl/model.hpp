@@ -1,3 +1,8 @@
+#ifndef NDEBUG
+#include <fstream>
+#include <range/v3/all.hpp>
+#endif // NDEBUG
+
 namespace triplet_match {
 
 template <typename Point>
@@ -30,7 +35,9 @@ struct model<Point>::impl {
             throw std::runtime_error("Cannot query uninitialized model");
         }
 
-        discrete_feature df = compute_discrete<PointQuery>(p1, p2, p3, params_);
+        float lower = diameter_ * s_params_.min_diameter_factor;
+        float upper = diameter_ * s_params_.max_diameter_factor;
+        discrete_feature df = compute_discrete<PointQuery>(p1, p2, p3, params_, lower, upper-lower);
 
         return map_.equal_range(df);
     }
@@ -66,6 +73,7 @@ struct model<Point>::impl {
 
         float lower = diameter_ * s_params_.min_diameter_factor;
         float upper = diameter_ * s_params_.max_diameter_factor;
+        float range = upper-lower;
         triplet_count_ = 0;
         for (uint32_t i : valid) {
             const Point& p1 = cloud_->points[i];
@@ -78,7 +86,7 @@ struct model<Point>::impl {
 
                 vec3f_t d1 = p2.getVector3fMap() - p1.getVector3fMap();
                 float dist1 = d1.norm();
-                d1 /= dist1;
+                //d1 /= dist1;
                 if (dist1 < lower || dist1 > upper) {
                     continue;
                 }
@@ -89,15 +97,20 @@ struct model<Point>::impl {
                         continue;
                     }
 
-                    vec3f_t d2 = (p3.getVector3fMap() - p1.getVector3fMap()).normalized();
-                    float orthogonality = 1.f - fabs(d2.dot(d1));
-                    if (orthogonality < s_params_.min_orthogonality) {
+                    vec3f_t d2 = (p3.getVector3fMap() - p2.getVector3fMap());
+                    float dist2 = d2.norm();
+                    if (dist2 < lower || dist2 > upper) {
                         continue;
                     }
 
+                    //float orthogonality = 1.f - fabs(d2.dot(d1));
+                    //if (orthogonality < s_params_.min_orthogonality) {
+                        //continue;
+                    //}
+
                     ++triplet_count_;
 
-                    discrete_feature df = compute_discrete<Point>(p1, p2, p3, params_);
+                    discrete_feature df = compute_discrete<Point>(p1, p2, p3, params_, lower, range);
 
                     map_.insert({df, triplet_t{i, j, k}});
                 }
@@ -174,5 +187,66 @@ inline typename model<Point>::cloud_t::ConstPtr
 model<Point>::cloud() const {
     return impl_->cloud();
 }
+
+#ifndef NDEBUG
+template <typename Point>
+void
+model<Point>::write_octave_density_maps(const std::string& folder, const std::string& data_file_prefix, const std::string& script_file) const {
+    const discretization_params& ps = impl_->params_;
+    const hash_map_t& map = impl_->map_;
+
+    const float max_angle = static_cast<float>(M_PI);
+    const uint32_t angle_count = static_cast<uint32_t>(max_angle / ps.angle_step) + 1;
+    const uint32_t dist_count = static_cast<uint32_t>(ps.distance_step_count);
+
+    std::vector<std::vector<uint32_t>> hists(5);
+    hists[0] = std::vector<uint32_t>(dist_count, 0);
+    hists[1] = std::vector<uint32_t>(dist_count, 0);
+    hists[2] = std::vector<uint32_t>(angle_count, 0);
+    hists[3] = std::vector<uint32_t>(angle_count, 0);
+    hists[4] = std::vector<uint32_t>(angle_count, 0);
+    auto missing_dims = ranges::view::cartesian_product(
+        ranges::view::ints(0u, dist_count),
+        ranges::view::ints(0u, dist_count),
+        ranges::view::ints(0u, angle_count),
+        ranges::view::ints(0u, angle_count),
+        ranges::view::ints(0u, angle_count)
+    );
+    for (auto && [a,b,c,d,e] : missing_dims) {
+        discrete_feature feat;
+        feat[0] = a;
+        feat[1] = b;
+        feat[2] = c;
+        feat[3] = d;
+        feat[4] = e;
+        auto && [fst,lst] = map.equal_range(feat);
+        uint32_t count = std::distance(fst, lst);
+        hists[0][a] += count;
+        hists[1][b] += count;
+        hists[2][c] += count;
+        hists[3][d] += count;
+        hists[4][e] += count;
+    }
+
+    auto name = [&] (uint32_t i) { return data_file_prefix + "_" + std::to_string(i); };
+
+    std::ofstream out;
+    for (uint32_t i = 0; i < 5; ++i) {
+        out.open(folder + "/" + name(i) + ".dat");
+        for (const auto& count : hists[i]) {
+            out << count << "\n";
+        }
+        out.close();
+    }
+
+    out.open(folder + "/" + script_file);
+    for (uint32_t i = 0; i < 5; ++i) {
+        out << "load " << name(i) << ".dat" << "\n";
+        out << "figure(" << (i+1) << ")" << "\n";
+        out << "plot(0:numel(" << name(i) << ")-1, " << name(i) << ", '-')" << "\n";
+    }
+    out.close();
+}
+#endif // NDEBUG
 
 }  // namespace triplet_match

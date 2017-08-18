@@ -7,13 +7,13 @@ struct discrete_feature : Eigen::Matrix<unsigned int, 5, 1> {
 };
 
 struct discretization_params {
-    float distance_step;
+    float distance_step_count;
     float angle_step;
 };
 
 template <typename Point>
 discrete_feature
-compute_discrete(const Point& p1, const Point& p2, const Point& p3, discretization_params params);
+compute_discrete(const Point& p1, const Point& p2, const Point& p3, discretization_params params, float min_dist, float dist_range);
 
 } // triplet_match
 

@@ -9,6 +9,10 @@ struct scene<Point>::impl {
     template <typename PointModel>
     mat4f_t find(model<PointModel>& m, std::function<float (const mat4f_t&)> score_func, const sample_parameters& params, subset_t subset);
 
+    typename cloud_t::ConstPtr cloud() const {
+        return cloud_;
+    }
+
     typename cloud_t::ConstPtr cloud_;
     pcl::search::KdTree<Point> kdtree_;
 };

@@ -16,4 +16,10 @@ namespace triplet_match {
     template typename pcl::PointCloud<type>::ConstPtr model<type>::cloud() const;
 #include "pcl_point_types.def"
 
+#ifndef NDEBUG
+#   define INSTANTIATE_PCL_POINT_TYPE(type) \
+        template void model<type>::write_octave_density_maps(const std::string& folder, const std::string& data_file_prefix, const std::string& script_file) const;
+#   include "pcl_point_types.def"
+#endif // NDEBUG
+
 }  // namespace triplet_match

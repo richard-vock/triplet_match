@@ -11,10 +11,11 @@ constexpr double match_probability = 0.99;
 
 uint64_t
 estimate_sample_count(uint32_t model_size, uint32_t scene_size, double neighborhood_size) {
-    double prob = std::pow(static_cast<double>(model_size), 3.0) / (static_cast<double>(scene_size) * 0.25 * neighborhood_size * neighborhood_size);
-    std::cout << "probability: " << prob << "\n";
+    double prob = std::pow(static_cast<double>(model_size), 3.0) / (static_cast<double>(scene_size) * neighborhood_size * neighborhood_size);
+    //std::cout << "probability: " << prob << "\n";
     uint64_t cand_bound = static_cast<uint64_t>(-std::log(1.0 - detail::match_probability) / prob);
-    std::cout << "estimated sample count: " << cand_bound << "\n";
+    uint64_t real_bound = static_cast<uint64_t>(std::log(1.0 - detail::match_probability) / std::log(1.0 - prob));
+    std::cout << "estimated sample count: " << cand_bound << " ~ " << real_bound <<  "\n";
     return cand_bound;
 }
 
@@ -77,7 +78,6 @@ template <typename Point>
 template <typename PointModel>
 inline mat4f_t
 scene<Point>::impl::find(model<PointModel>& m, std::function<float (const mat4f_t&)> score_func, const sample_parameters& params, subset_t subset) {
-    auto timer = timer::start();
     pcl::IndicesPtr indices;
     if (subset.empty()) {
         indices = pcl::IndicesPtr(new std::vector<int>(cloud_->size()));
@@ -102,19 +102,19 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<float (const mat4f_
 
     mat4f_t best_transform = mat4f_t::Identity();
     float best_score = 0.f;
-    uint64_t valid_sample_count = 0, sample_count = 0, last_important_sample = 0, last_important_valid_sample = 0;
+    uint64_t valid_sample_count = 0, sample_count = 0;//, last_important_sample = 0, last_important_valid_sample = 0;
 
     uint32_t n_model = m.cloud()->size();
     uint32_t n_scene = indices->size();
-    std::cout << "model size: " << n_model << "\n";
+    //std::cout << "model size: " << n_model << "\n";
     std::cout << "scene size: " << n_scene << "\n";
+    //std::cout << "model diameter: " << m.diameter() << "\n";
     uint64_t cand_bound = 0;
     double neighborhood_size = 0.0;
     uint32_t first_points = 0;
 
-    uint64_t init_duration = timer->stop<std::chrono::milliseconds>();
+    auto timer = timer::start();
 
-    timer->reset();
     bool stop = false;
     for (int i : *indices) {
         if (stop) {
@@ -151,10 +151,14 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<float (const mat4f_
                 if (k <= j) continue;
 
                 const Point& p3 = cloud_->points[k];
-                vec3f_t d2 = (p3.getVector3fMap() - p1.getVector3fMap()).normalized();
-                if (1.f - fabs(d2.dot(d1.normalized())) < params.min_orthogonality) {
+                vec3f_t d2 = (p3.getVector3fMap() - p2.getVector3fMap());
+                if (d2.squaredNorm() < lower) {
                     continue;
                 }
+                //vec3f_t d2 = (p3.getVector3fMap() - p1.getVector3fMap()).normalized();
+                //if (1.f - fabs(d2.dot(d1.normalized())) < params.min_orthogonality) {
+                    //continue;
+                //}
 
                 auto && [q_first, q_last] = m.query(p1, p2, p3);
                 if (q_first != q_last) {
@@ -171,8 +175,8 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<float (const mat4f_
                         static_cast<uint32_t>(k), m_i, m_j, m_k);
                     float score = std::invoke(score_func, transform);
                     if (score > best_score) {
-                        last_important_sample = sample_count;
-                        last_important_valid_sample = valid_sample_count;
+                        //last_important_sample = sample_count;
+                        //last_important_valid_sample = valid_sample_count;
                         best_transform = transform;
                         best_score = score;
                     }
@@ -182,12 +186,11 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<float (const mat4f_
     }
     uint64_t sample_duration = timer->stop<std::chrono::milliseconds>();
 
-    std::cout << "valid sample count: " << valid_sample_count << "\n";
-    std::cout << "tried sample count: " << sample_count << "\n";
-    std::cout << "important valid: " << last_important_valid_sample << "\n";
-    std::cout << "important tried: " << last_important_sample << "\n";
+    //std::cout << "valid sample count: " << valid_sample_count << "\n";
+    //std::cout << "tried sample count: " << sample_count << "\n";
+    //std::cout << "important valid: " << last_important_valid_sample << "\n";
+    //std::cout << "important tried: " << last_important_sample << "\n";
     std::cout << "validity ratio: " << (static_cast<double>(valid_sample_count) / sample_count) << "\n";
-    std::cout << "init duration: " << init_duration << "ms\n";
     std::cout << "sample duration: " << sample_duration << "ms\n";
     return best_transform.inverse();
 }
@@ -200,6 +203,12 @@ scene<Point>::scene(typename cloud_t::ConstPtr cloud) : impl_(new impl(cloud)) {
 template <typename Point>
 inline
 scene<Point>::~scene() {
+}
+
+template <typename Point>
+inline typename scene<Point>::cloud_t::ConstPtr
+scene<Point>::cloud() const {
+    return impl_->cloud();
 }
 
 }  // namespace triplet_match
