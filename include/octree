@@ -1,0 +1,76 @@
+#ifndef _TRIPLET_MATCH_OCTREE_
+#define _TRIPLET_MATCH_OCTREE_
+
+#include "common"
+#include <variant>
+#
+#include <range/v3/all.hpp>
+
+
+namespace triplet_match {
+
+struct leaf_node {
+    std::vector<uint32_t> points;
+};
+
+struct branch_node {
+    std::array<std::unique_ptr<std::variant<branch_node, leaf_node>>, 8>
+        children;
+};
+
+typedef std::variant<branch_node, leaf_node> node;
+typedef std::unique_ptr<node> node_ptr_t;
+
+struct min_voxel_size {
+    float value;
+};
+
+struct max_voxel_size {
+    float value;
+};
+
+struct max_point_count {
+    uint32_t value;
+};
+
+typedef std::variant<min_voxel_size, max_voxel_size, max_point_count>
+    subdivision_criterion_t;
+
+template <typename Point>
+class octree {
+public:
+    typedef std::unique_ptr<octree> uptr_t;
+    typedef std::shared_ptr<octree> sptr_t;
+    typedef std::weak_ptr<octree> wptr_t;
+    typedef std::shared_ptr<const octree> const_sptr_t;
+    typedef std::weak_ptr<const octree> const_wptr_t;
+
+    typedef Point point_t;
+    typedef pcl::PointCloud<Point> cloud_t;
+
+    class depth_traverse;
+
+public:
+    static sptr_t
+    from_pointcloud(typename cloud_t::ConstPtr cloud, uint32_t max_depth,
+                    subdivision_criterion_t crit, std::optional<subset_t> subset = std::nullopt);
+
+    ~octree();
+
+protected:
+    octree();
+
+protected:
+    node_ptr_t root_;
+    bbox3_t bbox_;
+};
+
+}  // namespace triplet_match
+
+#include "octree.ipp"
+#ifndef TRIPLET_MATCH_PRECOMPILE_HEADERS
+#include "impl/octree.hpp"
+#endif  // TRIPLET_MATCH_PRECOMPILE_HEADERS
+
+#endif /* _TRIPLET_MATCH_OCTREE_ */
+       // vim: syntax=cpp:
