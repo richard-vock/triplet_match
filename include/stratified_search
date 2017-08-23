@@ -2,6 +2,7 @@
 #define _TRIPLET_MATCH_STRATIFIED_SEARCH_
 
 #include <unordered_map>
+#include <pcl/octree/octree_pointcloud.h>
 
 #include "common"
 #include "model"
@@ -18,6 +19,7 @@ public:
     typedef std::weak_ptr<const stratified_search<Point>> const_wptr_t;
 
     typedef pcl::PointCloud<Point> cloud_t;
+    typedef pcl::octree::OctreePointCloud<Point> octree_t;
 
 public:
     stratified_search(typename cloud_t::ConstPtr cloud, const sample_parameters& sample_params, float model_diameter, float octree_diameter_factor);
@@ -31,8 +33,12 @@ public:
     find(model<PointModel>& m, float model_match_factor, float score_correspondence_threshold);
 
     template <typename PointModel>
-    std::pair<std::vector<mat4f_t>, subset_t>
+    std::pair<std::vector<mat4f_t>, std::vector<subset_t>>
     find_all(model<PointModel>& m, float model_match_factor, float score_correspondence_threshold);
+
+    octree_t& octree();
+
+    const octree_t& octree() const;
 
 protected:
     struct impl;

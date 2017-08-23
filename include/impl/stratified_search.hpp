@@ -1,5 +1,4 @@
 #include <scene>
-#include <pcl/octree/octree_pointcloud.h>
 #include <voxel_score/score_functor>
 namespace vs = voxel_score;
 
@@ -13,6 +12,7 @@ struct stratified_search<Point>::impl {
         octree_(octree_diameter_factor * model_diameter),
         scene_(new scene<Point>(cloud)) {
 
+        octree_.deleteTree();
         octree_.setInputCloud(cloud_);
         octree_.addPointsFromInputCloud();
 
@@ -45,8 +45,8 @@ struct stratified_search<Point>::impl {
         for(auto leaf_it = octree_.leaf_begin(); leaf_it != octree_.leaf_end(); ++leaf_it) {
             // get point subset
             std::vector<int> leaf_indices;
-            typename pcl::octree::OctreePointCloud<Point>::LeafNode* leaf_node =
-                dynamic_cast<typename pcl::octree::OctreePointCloud<Point>::LeafNode*>(*leaf_it);
+            typename octree_t::LeafNode* leaf_node =
+                dynamic_cast<typename octree_t::LeafNode*>(*leaf_it);
             leaf_node->getContainer().getPointIndices(leaf_indices);
             std::sort(leaf_indices.begin(), leaf_indices.end());
 
@@ -79,30 +79,60 @@ struct stratified_search<Point>::impl {
     }
 
     template <typename PointModel>
-    std::pair<std::vector<mat4f_t>, subset_t>
+    std::pair<std::vector<mat4f_t>, std::vector<subset_t>>
     find_all(model<PointModel>& m, float model_match_factor, float score_correspondence_threshold) {
         if (!score_) {
             throw std::runtime_error("stratified_search::find(): Model not set");
         }
         std::vector<mat4f_t> transforms;
-        subset_t all_matches;
-        uint32_t leaf_idx = 0;
+        std::vector<subset_t> all_matches;
+        uint32_t leaf_count = 0;
         for(auto leaf_it = octree_.leaf_begin(); leaf_it != octree_.leaf_end(); ++leaf_it) {
-            std::cout << "############## LEAF " << (++leaf_idx) << " #############" << "\n";
+            ++leaf_count;
+        }
+        uint32_t leaf_idx = 0;
+
+        //std::vector<std::vector<octree_t::OctreeNode*>> layers(octree_.getTreeDepth());
+        std::vector<std::pair<uint32_t, uint32_t>> layers(octree_.getTreeDepth()+1, std::pair<uint32_t, uint32_t>(0,0));
+        for(auto node_it = octree_.breadth_begin(); node_it != octree_.breadth_end(); ++node_it) {
+            uint32_t depth = node_it.getCurrentOctreeDepth();
+            if (node_it.isLeafNode()) layers[depth].second += 1;
+            else                      layers[depth].first += 1;
+        }
+        for (uint32_t i = 0; i < layers.size(); ++i) {
+            std::cout << "layer " << i << ":   " << layers[i].first << " branch   " << layers[i].second << " leaf" << "\n";
+        }
+
+
+        for(auto leaf_it = octree_.leaf_begin(); leaf_it != octree_.leaf_end(); ++leaf_it) {
+            std::cout << "############## LEAF " << (++leaf_idx) << "/" << leaf_count << " #############" << "\n";
+            //if (leaf_idx < 10) { // DEBUG
+            //    continue; // DEBUG
+            //}  // DEBUG
             // get point subset
             std::vector<int> leaf_indices;
-            typename pcl::octree::OctreePointCloud<Point>::LeafNode* leaf_node =
-                dynamic_cast<typename pcl::octree::OctreePointCloud<Point>::LeafNode*>(*leaf_it);
+            typename octree_t::LeafNode* leaf_node =
+                dynamic_cast<typename octree_t::LeafNode*>(*leaf_it);
             leaf_node->getContainer().getPointIndices(leaf_indices);
             std::sort(leaf_indices.begin(), leaf_indices.end());
 
             subset_t subset(leaf_indices.begin(), leaf_indices.end());
+            all_matches.push_back(subset);
+            continue;
             uint32_t before = transforms.size();
             while(true) {
                 uint32_t min_points = model_match_factor * model_->cloud()->size();
                 if (subset.size() < min_points) {
                     break;
                 }
+
+                //std::vector<int> matches; // DEBUG
+                //for (const auto& idx : leaf_indices) { // DEBUG
+                //    if (idx / m.cloud()->size() == 859) { // DEBUG
+                //        matches.push_back(idx); // DEBUG
+                //    } // DEBUG
+                //} // DEBUG
+
                 mat4f_t t = scene_->find(m, *score_, sample_params_, subset);
                 std::vector<int> matches = score_->correspondences(t, score_correspondence_threshold);
                 if (static_cast<float>(matches.size()) < min_points) {
@@ -113,22 +143,33 @@ struct stratified_search<Point>::impl {
                 subset_t new_subset;
                 std::set_difference(subset.begin(), subset.end(), matches.begin(), matches.end(), std::back_inserter(new_subset));
                 subset = new_subset;
-                all_matches.insert(all_matches.end(), matches.begin(), matches.end());
+                all_matches.push_back(subset_t(matches.begin(), matches.end()));
                 transforms.push_back(t);
+                //break;
             }
             std::cout << "Found: " << (transforms.size() - before) << " transformations in " << leaf_indices.size() << " points\n";
+            //break;
         }
 
-        std::sort(all_matches.begin(), all_matches.end());
-        auto new_end = std::unique(all_matches.begin(), all_matches.end());
-        all_matches.resize(std::distance(all_matches.begin(), new_end));
+        //std::sort(all_matches.begin(), all_matches.end());
+        //auto new_end = std::unique(all_matches.begin(), all_matches.end());
+        //all_matches.resize(std::distance(all_matches.begin(), new_end));
 
         return {transforms, all_matches};
     }
 
+    octree_t& octree() {
+        return octree_;
+    }
+
+    const octree_t& octree() const {
+        return octree_;
+    }
+
+
     typename cloud_t::ConstPtr cloud_;
     sample_parameters sample_params_;
-    pcl::octree::OctreePointCloud<Point> octree_;
+    octree_t octree_;
     typename scene<Point>::uptr_t scene_;
     typename model<Point>::sptr_t model_;
     subset_t valid_subset_;
@@ -162,9 +203,21 @@ stratified_search<Point>::find(model<PointModel>& m, float model_match_factor, f
 
 template <typename Point>
 template <typename PointModel>
-std::pair<std::vector<mat4f_t>, subset_t>
+inline std::pair<std::vector<mat4f_t>, std::vector<subset_t>>
 stratified_search<Point>::find_all(model<PointModel>& m, float model_match_factor, float score_correspondence_threshold) {
     return impl_->find_all(m, model_match_factor, score_correspondence_threshold);
+}
+
+template <typename Point>
+inline typename stratified_search<Point>::octree_t&
+stratified_search<Point>::octree() {
+    return impl_->octree();
+}
+
+template <typename Point>
+inline const typename stratified_search<Point>::octree_t&
+stratified_search<Point>::octree() const {
+    return impl_->octree();
 }
 
 } // triplet_match

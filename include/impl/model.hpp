@@ -98,8 +98,10 @@ struct model<Point>::impl {
                     }
 
                     vec3f_t d2 = (p3.getVector3fMap() - p2.getVector3fMap());
+                    vec3f_t d3 = (p3.getVector3fMap() - p1.getVector3fMap());
                     float dist2 = d2.norm();
-                    if (dist2 < lower || dist2 > upper) {
+                    float dist3 = d3.norm();
+                    if (dist2 < lower || dist2 > upper || dist3 < lower || dist3 > upper) {
                         continue;
                     }
 
@@ -110,6 +112,9 @@ struct model<Point>::impl {
 
                     ++triplet_count_;
 
+                    used_points_.insert(i);
+                    used_points_.insert(j);
+                    used_points_.insert(k);
                     discrete_feature df = compute_discrete<Point>(p1, p2, p3, params_, lower, range);
 
                     map_.insert({df, triplet_t{i, j, k}});
@@ -131,6 +136,7 @@ struct model<Point>::impl {
     float diameter_;
     uint32_t point_count_;
     uint64_t triplet_count_;
+    std::set<uint32_t> used_points_;
 };
 
 
@@ -186,6 +192,12 @@ template <typename Point>
 inline typename model<Point>::cloud_t::ConstPtr
 model<Point>::cloud() const {
     return impl_->cloud();
+}
+
+template <typename Point>
+inline std::set<uint32_t>
+model<Point>::used_points() const {
+    return impl_->used_points_;
 }
 
 #ifndef NDEBUG

@@ -13,7 +13,8 @@ namespace triplet_match {
     template float model<type>::diameter() const; \
     template uint32_t model<type>::point_count() const; \
     template uint64_t model<type>::triplet_count() const; \
-    template typename pcl::PointCloud<type>::ConstPtr model<type>::cloud() const;
+    template typename pcl::PointCloud<type>::ConstPtr model<type>::cloud() const; \
+    template std::set<uint32_t> model<type>::used_points() const;
 #include "pcl_point_types.def"
 
 #ifndef NDEBUG

@@ -6,6 +6,7 @@ namespace triplet_match {
 
 namespace detail {
 
+//constexpr uint32_t random_kernel_size = 100;
 constexpr bool deterministic = true;
 constexpr double match_probability = 0.99;
 
@@ -14,8 +15,7 @@ estimate_sample_count(uint32_t model_size, uint32_t scene_size, double neighborh
     double prob = std::pow(static_cast<double>(model_size), 3.0) / (static_cast<double>(scene_size) * neighborhood_size * neighborhood_size);
     //std::cout << "probability: " << prob << "\n";
     uint64_t cand_bound = static_cast<uint64_t>(-std::log(1.0 - detail::match_probability) / prob);
-    uint64_t real_bound = static_cast<uint64_t>(std::log(1.0 - detail::match_probability) / std::log(1.0 - prob));
-    std::cout << "estimated sample count: " << cand_bound << " ~ " << real_bound <<  "\n";
+    std::cout << "estimated sample count: " << cand_bound << "\n";
     return cand_bound;
 }
 
@@ -107,35 +107,34 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<float (const mat4f_
     uint32_t n_model = m.cloud()->size();
     uint32_t n_scene = indices->size();
     //std::cout << "model size: " << n_model << "\n";
-    std::cout << "scene size: " << n_scene << "\n";
+    //std::cout << "scene size: " << n_scene << "\n";
     //std::cout << "model diameter: " << m.diameter() << "\n";
-    uint64_t cand_bound = 0;
-    double neighborhood_size = 0.0;
-    uint32_t first_points = 0;
+    //uint64_t cand_bound = 0;
+    uint64_t outer_bound = static_cast<uint64_t>(std::log(1.0 - detail::match_probability) / std::log(1.0 - static_cast<double>(n_model) / n_scene));
+    //std::cout << "outer bound: " << outer_bound << "\n";
 
-    auto timer = timer::start();
+    //auto timer = timer::start();
 
-    bool stop = false;
-    for (int i : *indices) {
-        if (stop) {
-            break;
-        }
+    for (uint64_t outer = 0; outer < std::min(indices->size(), outer_bound); ++outer) {
+        int i = (*indices)[outer];
         const Point& p1 = cloud_->points[i];
 
         std::vector<int> nn;
         std::vector<float> dist;
         kdtree_.radiusSearch(p1, upper, nn,
                              dist);
+        if (nn.empty()) continue;
+        std::shuffle(nn.begin(), nn.end(), rng);
 
-        // online update for average neighborhood size
-        neighborhood_size += (static_cast<double>(nn.size()) - neighborhood_size) / (++first_points);
-        cand_bound = detail::estimate_sample_count(n_model, n_scene, neighborhood_size);
+        double prob = static_cast<double>(n_model) / nn.size();
+        uint64_t inner_bound = static_cast<uint64_t>(-std::log(1.0 - detail::match_probability) / prob);
+        inner_bound = std::min(inner_bound, nn.size());
+        //std::cout << "inner bound: " << inner_bound << "\n";
+        //std::cout << "neighborhood size: " << nn.size() << "\n";
 
-        for (int j : nn) {
-            if (stop) {
-                break;
-            }
-            if (j <= i) continue;
+        for (uint64_t inner0 = 0; inner0 < inner_bound; ++inner0) {
+            int j = nn[inner0];
+            if (j == i) continue;
 
             const Point& p2 = cloud_->points[j];
 
@@ -144,15 +143,14 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<float (const mat4f_
                 continue;
             }
 
-            for (int k : nn) {
-                if (stop) {
-                    break;
-                }
-                if (k <= j) continue;
+            for (uint64_t inner1 = 0; inner1 < inner_bound; ++inner1) {
+                int k = nn[inner1];
+                if (k == j || k == i) continue;
 
                 const Point& p3 = cloud_->points[k];
                 vec3f_t d2 = (p3.getVector3fMap() - p2.getVector3fMap());
-                if (d2.squaredNorm() < lower) {
+                vec3f_t d3 = (p3.getVector3fMap() - p1.getVector3fMap());
+                if (d2.squaredNorm() < lower || d3.squaredNorm() < lower) {
                     continue;
                 }
                 //vec3f_t d2 = (p3.getVector3fMap() - p1.getVector3fMap()).normalized();
@@ -164,7 +162,8 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<float (const mat4f_
                 if (q_first != q_last) {
                     ++valid_sample_count;
                 }
-                stop = (++sample_count) > cand_bound;
+
+                ++sample_count;
                 for (auto it = q_first; it != q_last; ++it) {
                     auto&& [m_i, m_j, m_k] = it->second;
 
@@ -184,14 +183,9 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<float (const mat4f_
             }
         }
     }
-    uint64_t sample_duration = timer->stop<std::chrono::milliseconds>();
+    //uint64_t sample_duration = timer->stop<std::chrono::milliseconds>();
 
-    //std::cout << "valid sample count: " << valid_sample_count << "\n";
-    //std::cout << "tried sample count: " << sample_count << "\n";
-    //std::cout << "important valid: " << last_important_valid_sample << "\n";
-    //std::cout << "important tried: " << last_important_sample << "\n";
-    std::cout << "validity ratio: " << (static_cast<double>(valid_sample_count) / sample_count) << "\n";
-    std::cout << "sample duration: " << sample_duration << "ms\n";
+    //std::cout << "samples: " << sample_count << "  validity: " << (static_cast<double>(valid_sample_count) / sample_count) << "  duration: " << sample_duration << "ms\n";
     return best_transform.inverse();
 }
 

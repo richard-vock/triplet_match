@@ -46,6 +46,8 @@ public:
 
     typename cloud_t::ConstPtr cloud() const;
 
+    std::set<uint32_t> used_points() const;
+
 #ifndef NDEBUG
     void
     write_octave_density_maps(const std::string& folder, const std::string& data_file_prefix, const std::string& script_file) const;

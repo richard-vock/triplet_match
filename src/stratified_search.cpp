@@ -15,7 +15,9 @@ namespace triplet_match {
     template stratified_search<type>::~stratified_search(); \
     template void stratified_search<type>::set_model(typename model<type>::sptr_t m); \
     template std::pair<mat4f_t, subset_t> stratified_search<type>::find<type>(model<type>& m, float model_match_factor, float score_correspondence_threshold); \
-    template std::pair<std::vector<mat4f_t>, subset_t> stratified_search<type>::find_all<type>(model<type>& m, float model_match_factor, float score_correspondence_threshold);
+    template std::pair<std::vector<mat4f_t>, std::vector<subset_t>> stratified_search<type>::find_all<type>(model<type>& m, float model_match_factor, float score_correspondence_threshold); \
+    template typename stratified_search<type>::octree_t& stratified_search<type>::octree(); \
+    template const typename stratified_search<type>::octree_t& stratified_search<type>::octree() const;
 #include "pcl_point_types.def"
 
 }  // namespace triplet_match
@@ -36,12 +38,12 @@ namespace triplet_match {
 template class PCL_EXPORTS pcl::octree::OctreeBase<pcl::octree::OctreeContainerPointIndices>;
 
 
-PCL_INSTANTIATE(OctreePointCloudSingleBufferWithLeafDataTVector,
-    PCL_XYZ_POINT_TYPES)
-PCL_INSTANTIATE(OctreePointCloudDoubleBufferWithLeafDataTVector,
-    PCL_XYZ_POINT_TYPES)
+//PCL_INSTANTIATE(OctreePointCloudSingleBufferWithLeafDataTVector,
+    //PCL_XYZ_POINT_TYPES)
+//PCL_INSTANTIATE(OctreePointCloudDoubleBufferWithLeafDataTVector,
+    //PCL_XYZ_POINT_TYPES)
 
-PCL_INSTANTIATE(OctreePointCloudSearch, PCL_XYZ_POINT_TYPES)
+//PCL_INSTANTIATE(OctreePointCloudSearch, PCL_XYZ_POINT_TYPES)
 
 //#define INSTANTIATE_PCL_POINT_TYPE(type)
 //#include "pcl_point_types.def"
