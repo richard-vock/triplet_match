@@ -45,6 +45,13 @@ struct sample_parameters {
     float redundancy_factor;
 };
 
+template <class... Ts>
+struct overloaded : Ts... {
+    using Ts::operator()...;
+};
+template <class... Ts>
+overloaded(Ts...)->overloaded<Ts...>;
+
 } // triplet_match
 
 #endif /* _TRIPLET_MATCH_COMMON_ */

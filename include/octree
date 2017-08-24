@@ -3,23 +3,33 @@
 
 #include "common"
 #include <variant>
-#
+
 #include <range/v3/all.hpp>
 
 
 namespace triplet_match {
 
-struct leaf_node {
+struct base_node {
+    uint8_t depth;
+    bbox3_t bbox;
+};
+
+struct leaf_node : base_node {
     std::vector<uint32_t> points;
 };
 
-struct branch_node {
+struct branch_node : base_node {
     std::array<std::unique_ptr<std::variant<branch_node, leaf_node>>, 8>
         children;
 };
 
+
 typedef std::variant<branch_node, leaf_node> node;
 typedef std::unique_ptr<node> node_ptr_t;
+
+base_node * as_base_node(node & n);
+
+base_node const* as_base_node(node const& n);
 
 struct min_voxel_size {
     float value;
@@ -49,6 +59,10 @@ public:
     typedef pcl::PointCloud<Point> cloud_t;
 
     class depth_traverse;
+    class breadth_traverse;
+    class leaf_traverse;
+    class branch_traverse;
+    class level_traverse;
 
 public:
     static sptr_t
@@ -57,12 +71,16 @@ public:
 
     ~octree();
 
+    uint32_t depth() const;
+
+    node const& root() const;
+
 protected:
     octree();
 
 protected:
-    node_ptr_t root_;
-    bbox3_t bbox_;
+    struct impl;
+    std::unique_ptr<impl> impl_;
 };
 
 }  // namespace triplet_match
