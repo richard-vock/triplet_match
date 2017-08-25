@@ -82,7 +82,6 @@ struct stratified_search<Point>::impl {
         std::vector<subset_t> all_matches;
         std::set<uint32_t> considered;
 
-        std::cout << "tree depth: " << octree_->depth() << "\n";
         for (int32_t level = octree_->depth(); level >= 0; --level) {
             std::cout << "############## LEVEL " << level << " #############" << "\n";
             typename octree_t::level_traverse level_rng(octree_->root(), static_cast<uint8_t>(level));
@@ -102,7 +101,6 @@ struct stratified_search<Point>::impl {
                         subset.insert(subset.end(), leaf.points.begin(), leaf.points.end());
                         ++subtree_size;
                     });
-                    std::cout << "Gathered from " << subtree_size << " leaves " << "\n";
                     std::sort(subset.begin(), subset.end());
                     // since by walking bottom-to-top we already considered leaves;
                     // therefore most points must not be considered any longer
@@ -112,7 +110,7 @@ struct stratified_search<Point>::impl {
                 }
 
                 uint32_t subtree_count = subset.size();
-                std::cout << "subtree point count: " << subtree_count << "\n";
+                std::cout << "Search in " << subtree_count << " points...   ";
                 if (!subtree_count) return;
 
                 //if (leaf_idx) return;
@@ -137,7 +135,7 @@ struct stratified_search<Point>::impl {
                     all_matches.push_back(subset_t(matches.begin(), matches.end()));
                     transforms.push_back(t);
                 }
-                std::cout << "Found: " << (transforms.size() - before) << " transformations in " << subtree_count << " points\n";
+                std::cout << (transforms.size() - before) << " transformations found.\n";
             });
         }
 
