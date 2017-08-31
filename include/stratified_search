@@ -7,6 +7,8 @@
 #include "model"
 #include "octree"
 
+#include <voxel_score/score_functor>
+
 namespace triplet_match {
 
 template <typename Point>
@@ -35,6 +37,9 @@ public:
     typename octree_t::sptr_t get_octree();
 
     typename octree_t::const_sptr_t get_octree() const;
+
+    voxel_score::score_functor<Point, Point>&
+    get_score_functor();
 
 protected:
     struct impl;

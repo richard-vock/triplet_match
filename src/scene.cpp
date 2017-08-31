@@ -14,7 +14,7 @@ namespace detail {
 
 #define INSTANTIATE_PCL_POINT_TYPE(type) \
     template struct scene<type>::impl; \
-    template mat4f_t scene<type>::impl::find<type>(model<type>& m, std::function<float (const mat4f_t&)> score_func, const sample_parameters& params, subset_t subset); \
+    template mat4f_t scene<type>::impl::find<type>(model<type>& m, std::function<uint32_t (const mat4f_t&)> score_func, std::function<bool (uint32_t)> early_out_func, const sample_parameters& params, subset_t subset); \
     template scene<type>::scene(typename pcl::PointCloud<type>::ConstPtr cloud); \
     template scene<type>::~scene(); \
     template typename pcl::PointCloud<type>::ConstPtr scene<type>::cloud() const;

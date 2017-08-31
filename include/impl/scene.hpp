@@ -7,6 +7,7 @@ namespace triplet_match {
 namespace detail {
 
 //constexpr uint32_t random_kernel_size = 100;
+constexpr bool early_out = true;
 constexpr bool deterministic = true;
 constexpr double match_probability = 0.99;
 
@@ -77,7 +78,7 @@ scene<Point>::impl::~impl() {}
 template <typename Point>
 template <typename PointModel>
 inline mat4f_t
-scene<Point>::impl::find(model<PointModel>& m, std::function<float (const mat4f_t&)> score_func, const sample_parameters& params, subset_t subset) {
+scene<Point>::impl::find(model<PointModel>& m, std::function<uint32_t (const mat4f_t&)> score_func, std::function<bool (uint32_t)> early_out_func, const sample_parameters& params, subset_t subset) {
     pcl::IndicesPtr indices;
     if (subset.empty()) {
         indices = pcl::IndicesPtr(new std::vector<int>(cloud_->size()));
@@ -101,7 +102,7 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<float (const mat4f_
     std::shuffle(indices->begin(), indices->end(), rng);
 
     mat4f_t best_transform = mat4f_t::Identity();
-    float best_score = 0.f;
+    uint32_t best_score = 0;
     uint64_t valid_sample_count = 0, sample_count = 0;//, last_important_sample = 0, last_important_valid_sample = 0;
 
     uint32_t n_model = m.cloud()->size();
@@ -172,12 +173,17 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<float (const mat4f_
                         static_cast<uint32_t>(i),
                         static_cast<uint32_t>(j),
                         static_cast<uint32_t>(k), m_i, m_j, m_k);
-                    float score = std::invoke(score_func, transform);
+                    uint32_t score = std::invoke(score_func, transform);
                     if (score > best_score) {
                         //last_important_sample = sample_count;
                         //last_important_valid_sample = valid_sample_count;
                         best_transform = transform;
                         best_score = score;
+
+                        if (detail::early_out && early_out_func(best_score)) {
+                            //std::cout << "opting out at " << (static_cast<float>((outer+1) * (inner0+1) * (inner1+1)) / (outer_bound * inner_bound * inner_bound)) << "%\n";
+                            return transform;
+                        }
                     }
                 }
             }
@@ -186,7 +192,7 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<float (const mat4f_
     //uint64_t sample_duration = timer->stop<std::chrono::milliseconds>();
 
     //std::cout << "samples: " << sample_count << "  validity: " << (static_cast<double>(valid_sample_count) / sample_count) << "  duration: " << sample_duration << "ms\n";
-    return best_transform.inverse();
+    return best_transform;
 }
 
 template <typename Point>

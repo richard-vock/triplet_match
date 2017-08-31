@@ -1,5 +1,4 @@
 #include <scene>
-#include <voxel_score/score_functor>
 namespace vs = voxel_score;
 
 namespace triplet_match {
@@ -26,7 +25,7 @@ struct stratified_search<Point>::impl {
         // create score functor
         gstate_ = std::make_shared<vs::gpu_state>();
         score_ = std::make_unique<vs::score_functor<Point, Point>>(gstate_);
-        score_->set_model(model_->cloud(), 100);
+        score_->set_model(model_->cloud(), 100, 0.01f);
         score_->set_scene(scene_->cloud());
     }
 
@@ -121,7 +120,10 @@ struct stratified_search<Point>::impl {
                         break;
                     }
 
-                    mat4f_t t = scene_->find(m, *score_, sample_params_, subset);
+                    mat4f_t t = scene_->find(m, [&] (const mat4f_t& hyp) { return score_->correspondence_count(hyp, score_correspondence_threshold); }, [&] (uint32_t ccount) { return ccount > min_points; }, sample_params_, subset);
+                    std::vector<vec3f_t> dummy0;
+                    std::vector<int> dummy1;
+                    t = score_->icp(t, 0.9f, dummy0, dummy1);
                     std::vector<int> matches = score_->correspondences(t, score_correspondence_threshold);
                     if (static_cast<float>(matches.size()) < min_points) {
                         break;
@@ -133,7 +135,7 @@ struct stratified_search<Point>::impl {
                     subset = new_subset;
                     considered.insert(matches.begin(), matches.end());
                     all_matches.push_back(subset_t(matches.begin(), matches.end()));
-                    transforms.push_back(t);
+                    transforms.push_back(t.inverse());
                 }
                 std::cout << (transforms.size() - before) << " transformations found.\n";
             });
@@ -155,6 +157,10 @@ struct stratified_search<Point>::impl {
         return octree_;
     }
 
+    vs::score_functor<Point, Point>&
+    get_score_functor() {
+        return *score_;
+    }
 
     typename cloud_t::ConstPtr cloud_;
     sample_parameters sample_params_;
@@ -199,6 +205,12 @@ template <typename Point>
 inline typename stratified_search<Point>::octree_t::const_sptr_t
 stratified_search<Point>::get_octree() const {
     return impl_->get_octree();
+}
+
+template <typename Point>
+inline voxel_score::score_functor<Point, Point>&
+stratified_search<Point>::get_score_functor() {
+    return impl_->get_score_functor();
 }
 
 } // triplet_match
