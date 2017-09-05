@@ -13,7 +13,7 @@ class timer {
         typedef std::weak_ptr<timer>         wptr_t;
         typedef std::shared_ptr<const timer> const_sptr_t;
         typedef std::weak_ptr<const timer>   const_wptr_t;
-        typedef std::chrono::system_clock    clock;
+        typedef std::chrono::high_resolution_clock    clock;
 
     public:
         virtual ~timer() {}

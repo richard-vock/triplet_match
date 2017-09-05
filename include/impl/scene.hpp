@@ -77,7 +77,7 @@ scene<Point>::impl::~impl() {}
 
 template <typename Point>
 template <typename PointModel>
-inline mat4f_t
+inline std::pair<mat4f_t, uint32_t>
 scene<Point>::impl::find(model<PointModel>& m, std::function<uint32_t (const mat4f_t&)> score_func, std::function<bool (uint32_t)> early_out_func, const sample_parameters& params, subset_t subset) {
     pcl::IndicesPtr indices;
     if (subset.empty()) {
@@ -103,18 +103,14 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<uint32_t (const mat
 
     mat4f_t best_transform = mat4f_t::Identity();
     uint32_t best_score = 0;
-    uint64_t valid_sample_count = 0, sample_count = 0;//, last_important_sample = 0, last_important_valid_sample = 0;
+    uint64_t valid_sample_count = 0, sample_count = 0;
 
     uint32_t n_model = m.cloud()->size();
     uint32_t n_scene = indices->size();
-    //std::cout << "model size: " << n_model << "\n";
-    //std::cout << "scene size: " << n_scene << "\n";
-    //std::cout << "model diameter: " << m.diameter() << "\n";
-    //uint64_t cand_bound = 0;
     uint64_t outer_bound = static_cast<uint64_t>(std::log(1.0 - detail::match_probability) / std::log(1.0 - static_cast<double>(n_model) / n_scene));
-    //std::cout << "outer bound: " << outer_bound << "\n";
 
-    //auto timer = timer::start();
+    //auto time = timer::start();
+    //uint64_t corr_meas = 0, corr_meas_count = 0;
 
     for (uint64_t outer = 0; outer < std::min(indices->size(), outer_bound); ++outer) {
         int i = (*indices)[outer];
@@ -130,8 +126,6 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<uint32_t (const mat
         double prob = static_cast<double>(n_model) / nn.size();
         uint64_t inner_bound = static_cast<uint64_t>(-std::log(1.0 - detail::match_probability) / prob);
         inner_bound = std::min(inner_bound, nn.size());
-        //std::cout << "inner bound: " << inner_bound << "\n";
-        //std::cout << "neighborhood size: " << nn.size() << "\n";
 
         for (uint64_t inner0 = 0; inner0 < inner_bound; ++inner0) {
             int j = nn[inner0];
@@ -154,10 +148,6 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<uint32_t (const mat
                 if (d2.squaredNorm() < lower || d3.squaredNorm() < lower) {
                     continue;
                 }
-                //vec3f_t d2 = (p3.getVector3fMap() - p1.getVector3fMap()).normalized();
-                //if (1.f - fabs(d2.dot(d1.normalized())) < params.min_orthogonality) {
-                    //continue;
-                //}
 
                 auto && [q_first, q_last] = m.query(p1, p2, p3);
                 if (q_first != q_last) {
@@ -173,26 +163,29 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<uint32_t (const mat
                         static_cast<uint32_t>(i),
                         static_cast<uint32_t>(j),
                         static_cast<uint32_t>(k), m_i, m_j, m_k);
+                    //time->reset();
                     uint32_t score = std::invoke(score_func, transform);
+                    //corr_meas += time->stop<std::chrono::microseconds>();
+                    //++corr_meas_count;
+                    //if (corr_meas_count == 100) {
+                        //std::cout << static_cast<double>(corr_meas) / 100.0 << "us\n";
+                        //corr_meas = 0;
+                        //corr_meas_count = 0;
+                    //}
                     if (score > best_score) {
-                        //last_important_sample = sample_count;
-                        //last_important_valid_sample = valid_sample_count;
                         best_transform = transform;
                         best_score = score;
 
                         if (detail::early_out && early_out_func(best_score)) {
-                            //std::cout << "opting out at " << (static_cast<float>((outer+1) * (inner0+1) * (inner1+1)) / (outer_bound * inner_bound * inner_bound)) << "%\n";
-                            return transform;
+                            return {transform, best_score};
                         }
                     }
                 }
             }
         }
     }
-    //uint64_t sample_duration = timer->stop<std::chrono::milliseconds>();
 
-    //std::cout << "samples: " << sample_count << "  validity: " << (static_cast<double>(valid_sample_count) / sample_count) << "  duration: " << sample_duration << "ms\n";
-    return best_transform;
+    return {best_transform, best_score};
 }
 
 template <typename Point>

@@ -7,7 +7,8 @@ struct scene<Point>::impl {
     ~impl();
 
     template <typename PointModel>
-    mat4f_t find(model<PointModel>& m, std::function<uint32_t (const mat4f_t&)> score_func, std::function<bool (uint32_t)> early_out_func, const sample_parameters& params, subset_t subset);
+    std::pair<mat4f_t, uint32_t>
+    find(model<PointModel>& m, std::function<uint32_t (const mat4f_t&)> score_func, std::function<bool (uint32_t)> early_out_func, const sample_parameters& params, subset_t subset);
 
     typename cloud_t::ConstPtr cloud() const {
         return cloud_;
@@ -26,7 +27,7 @@ scene<Point>::find(model<PointModel>& m, ScoreFunctor&& score_func, EarlyOutFunc
 
 template <typename Point>
 template <typename PointModel, typename ScoreFunctor, typename EarlyOutFunctor>
-inline mat4f_t
+inline std::pair<mat4f_t, uint32_t>
 scene<Point>::find(model<PointModel>& m, ScoreFunctor&& score_func, EarlyOutFunctor&& early_out_func, const sample_parameters& sample_params, const subset_t& subset) {
     return impl_->find(m, [&] (const mat4f_t& t) { return score_func(t); }, [&] (uint32_t score) { return early_out_func(score); }, sample_params, subset);
 }

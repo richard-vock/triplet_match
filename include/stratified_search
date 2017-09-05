@@ -32,7 +32,7 @@ public:
 
     template <typename PointModel>
     std::pair<std::vector<mat4f_t>, std::vector<subset_t>>
-    find_all(model<PointModel>& m, float model_match_factor, float score_correspondence_threshold);
+    find_all(model<PointModel>& m, float model_match_factor, float score_correspondence_threshold, float early_out_factor);
 
     typename octree_t::sptr_t get_octree();
 

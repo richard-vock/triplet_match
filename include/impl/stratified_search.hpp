@@ -29,51 +29,9 @@ struct stratified_search<Point>::impl {
         score_->set_scene(scene_->cloud());
     }
 
-    //template <typename PointModel>
-    //std::pair<mat4f_t, subset_t>
-    //find(model<PointModel>& m, float model_match_factor, float score_correspondence_threshold) {
-    //    if (!score_) {
-    //        throw std::runtime_error("stratified_search::find(): Model not set");
-    //    }
-    //    for(auto leaf_it = octree_.leaf_begin(); leaf_it != octree_.leaf_end(); ++leaf_it) {
-    //        // get point subset
-    //        std::vector<int> leaf_indices;
-    //        typename octree_t::LeafNode* leaf_node =
-    //            dynamic_cast<typename octree_t::LeafNode*>(*leaf_it);
-    //        leaf_node->getContainer().getPointIndices(leaf_indices);
-    //        std::sort(leaf_indices.begin(), leaf_indices.end());
-
-    //        // only valid points
-    //        subset_t subset;
-    //        std::set_intersection(leaf_indices.begin(), leaf_indices.end(), valid_subset_.begin(), valid_subset_.end(), std::back_inserter(subset));
-    //        //std::cout << "----     Octree cell with " << subset.size() << " points" << "\n";
-
-
-    //        // find best transform
-    //        //mat4f_t t = scene_->find(m, *score_, sample_params_, subset);
-    //        //std::vector<int> matches = score_->correspondences(t, score_correspondence_threshold);
-    //        if (subset.size() < leaf_indices.size()) {
-    //            continue;
-    //        }
-    //        std::cout << "----     Octree cell with " << subset.size() << " points" << "\n";
-    //        subset.clear();
-    //        std::set_difference(valid_subset_.begin(), valid_subset_.end(), leaf_indices.begin(), leaf_indices.end(), std::back_inserter(subset));
-    //        valid_subset_ = subset;
-    //        return {mat4f_t::Identity(), subset_t(leaf_indices.begin(), leaf_indices.end())};
-    //        //if (static_cast<float>(matches.size()) > model_match_factor * model_->cloud()->size()) {
-    //            //subset.clear();
-    //            //std::set_difference(valid_subset_.begin(), valid_subset_.end(), matches.begin(), matches.end(), std::back_inserter(subset));
-    //            //valid_subset_ = subset;
-    //            //return {t, subset_t(matches.begin(), matches.end())};
-    //        //}
-    //    }
-
-    //    return {mat4f_t::Identity(), subset_t()};
-    //}
-
     template <typename PointModel>
     std::pair<std::vector<mat4f_t>, std::vector<subset_t>>
-    find_all(model<PointModel>& m, float model_match_factor, float score_correspondence_threshold) {
+    find_all(model<PointModel>& m, float model_match_factor, float score_correspondence_threshold, float early_out_factor) {
         if (!score_) {
             throw std::runtime_error("stratified_search::find(): Model not set");
         }
@@ -120,14 +78,16 @@ struct stratified_search<Point>::impl {
                         break;
                     }
 
-                    mat4f_t t = scene_->find(m, [&] (const mat4f_t& hyp) { return score_->correspondence_count(hyp, score_correspondence_threshold); }, [&] (uint32_t ccount) { return ccount > min_points; }, sample_params_, subset);
-                    std::vector<vec3f_t> dummy0;
-                    std::vector<int> dummy1;
-                    t = score_->icp(t, 0.9f, dummy0, dummy1);
-                    std::vector<int> matches = score_->correspondences(t, score_correspondence_threshold);
-                    if (static_cast<float>(matches.size()) < min_points) {
+                    mat4f_t t;
+                    uint32_t max_score;
+                    std::tie(t, max_score) = scene_->find(m, [&] (const mat4f_t& hyp) { return score_->correspondence_count(hyp, score_correspondence_threshold); }, [&] (uint32_t ccount) { return static_cast<float>(ccount) >= early_out_factor * model_->cloud()->size(); }, sample_params_, subset);
+
+                    if (max_score < min_points) {
                         break;
                     }
+
+                    std::vector<int> matches;
+                    std::tie(t, matches) = score_->icp(t, score_correspondence_threshold, 0);
 
                     // transform is good enough
                     subset_t new_subset;
@@ -140,11 +100,6 @@ struct stratified_search<Point>::impl {
                 std::cout << (transforms.size() - before) << " transformations found.\n";
             });
         }
-
-
-        //std::sort(all_matches.begin(), all_matches.end());
-        //auto new_end = std::unique(all_matches.begin(), all_matches.end());
-        //all_matches.resize(std::distance(all_matches.begin(), new_end));
 
         return {transforms, all_matches};
     }
@@ -191,8 +146,8 @@ stratified_search<Point>::set_model(typename model<Point>::sptr_t m) {
 template <typename Point>
 template <typename PointModel>
 inline std::pair<std::vector<mat4f_t>, std::vector<subset_t>>
-stratified_search<Point>::find_all(model<PointModel>& m, float model_match_factor, float score_correspondence_threshold) {
-    return impl_->find_all(m, model_match_factor, score_correspondence_threshold);
+stratified_search<Point>::find_all(model<PointModel>& m, float model_match_factor, float score_correspondence_threshold, float early_out_factor) {
+    return impl_->find_all(m, model_match_factor, score_correspondence_threshold, early_out_factor);
 }
 
 template <typename Point>
