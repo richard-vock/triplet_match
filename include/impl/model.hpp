@@ -33,10 +33,10 @@ struct model<Point>::impl {
             throw std::runtime_error("Cannot query uninitialized model");
         }
 
-        float lower = s_params_.min_diameter_factor * diameter_;
-        float upper = s_params_.max_diameter_factor * diameter_;
-        //float lower = s_params_.min_triplet_ratio;
-        //float upper = s_params_.max_triplet_ratio;
+        float lower = diameter_ * s_params_.min_diameter_factor;
+        float upper = diameter_ * s_params_.max_diameter_factor;
+        //float lower_ratio = s_params_.min_triplet_ratio;
+        //float upper_ratio = s_params_.max_triplet_ratio;
         discrete_feature df = compute_discrete<PointQuery>(p1, p2, p3, params_, lower, upper-lower);
 
         return map_.equal_range(df);
@@ -71,11 +71,12 @@ struct model<Point>::impl {
         }
         diameter_ = (bbox.max() - bbox.min()).norm();
 
-        //float lower = s_params_.min_triplet_ratio;
-        //float upper = s_params_.max_triplet_ratio;
-        float lower_radius = s_params_.min_diameter_factor * diameter_;
-        float upper_radius = s_params_.max_diameter_factor * diameter_;
-        //float range = upper-lower;
+        float lower = diameter_ * s_params_.min_diameter_factor;
+        float upper = diameter_ * s_params_.max_diameter_factor;
+        float range = upper-lower;
+        //float lower_ratio = s_params_.min_triplet_ratio;
+        //float upper_ratio = s_params_.max_triplet_ratio;
+        //float range_ratio = upper_ratio - lower_ratio;
         triplet_count_ = 0;
         for (uint32_t i : valid) {
             const Point& p1 = cloud_->points[i];
@@ -88,7 +89,7 @@ struct model<Point>::impl {
 
                 vec3f_t d1 = p2.getVector3fMap() - p1.getVector3fMap();
                 float dist1 = d1.norm();
-                if (dist1 < lower_radius || dist1 > upper_radius) {
+                if (dist1 < lower || dist1 > upper) {
                     continue;
                 }
 
@@ -102,7 +103,7 @@ struct model<Point>::impl {
                     vec3f_t d3 = (p3.getVector3fMap() - p1.getVector3fMap());
                     float dist2 = d2.norm();
                     float dist3 = d3.norm();
-                    if (dist2 < lower_radius || dist2 > upper_radius || dist3 < lower_radius || dist3 > upper_radius) {
+                    if (dist2 < lower || dist2 > upper || dist3 < lower || dist3 > upper) {
                         continue;
                     }
                     //float rat0 = dist2 / dist1;
@@ -116,7 +117,7 @@ struct model<Point>::impl {
                     used_points_.insert(i);
                     used_points_.insert(j);
                     used_points_.insert(k);
-                    discrete_feature df = compute_discrete<Point>(p1, p2, p3, params_, lower_radius, upper_radius - lower_radius);
+                    discrete_feature df = compute_discrete<Point>(p1, p2, p3, params_, lower, range);
 
                     map_.insert({df, triplet_t{i, j, k}});
                 }

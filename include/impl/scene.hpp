@@ -89,11 +89,11 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<uint32_t (const mat
             new std::vector<int>(subset.begin(), subset.end()));
     }
     kdtree_.setInputCloud(cloud_, indices);
-    float lower = params.min_triplet_ratio;
-    float upper = params.max_triplet_ratio;
-    float lower_radius = params.min_diameter_factor * m.diameter();
-    float upper_radius = params.max_diameter_factor * m.diameter();
-
+    float lower = m.diameter() * params.min_diameter_factor;
+    float upper = m.diameter() * params.max_diameter_factor;
+    //float lower_ratio = params.min_triplet_ratio;
+    //float upper_ratio = params.max_triplet_ratio;
+    
     std::mt19937 rng;
     uint32_t seed = 13;
     if (!detail::deterministic) {
@@ -117,7 +117,7 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<uint32_t (const mat
 
         std::vector<int> nn;
         std::vector<float> dist;
-        kdtree_.radiusSearch(p1, upper_radius, nn,
+        kdtree_.radiusSearch(p1, upper, nn,
                              dist);
         if (nn.empty()) continue;
         std::shuffle(nn.begin(), nn.end(), rng);
@@ -134,7 +134,7 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<uint32_t (const mat
 
             vec3f_t d1 = p2.getVector3fMap() - p1.getVector3fMap();
             float dist1 = d1.norm();
-            if (dist1 < lower_radius) {
+            if (dist1 < lower) {
                 continue;
             }
 
@@ -147,7 +147,7 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<uint32_t (const mat
                 vec3f_t d3 = (p3.getVector3fMap() - p1.getVector3fMap());
                 float dist2 = d2.norm();
                 float dist3 = d3.norm();
-                if (dist2 < lower_radius || dist3 < lower_radius) {
+                if (dist2 < lower || dist3 < lower) {
                     continue;
                 }
                 //float rat0 = dist2 / dist1;

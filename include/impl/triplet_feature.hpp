@@ -98,27 +98,26 @@ discrete_feature
 compute_discrete(const Point& p1, const Point& p2, const Point& p3, discretization_params params, float min_ratio, float range_ratio) {
     vec3f_t d1 = p2.getVector3fMap() - p1.getVector3fMap();
     vec3f_t d2 = p3.getVector3fMap() - p2.getVector3fMap();
+    float f1 = d2.norm();
     vec3f_t d3 = p3.getVector3fMap() - p1.getVector3fMap();
-    //const float dist1 = d1.norm();
-    const float dist2 = d2.norm();
-    const float dist3 = d3.norm();
-    const float f1 = dist2;// / dist1;
-    const float f2 = dist3;// / dist1;
+    float f2 = d3.norm();
+    //const float f1 = d1.norm();
+    //const float f2 = d3.norm();
 
-    //vec3f_t n1 = p1.getNormalVector3fMap().normalized();
-    //vec3f_t n2 = p2.getNormalVector3fMap().normalized();
-    //vec3f_t n3 = p3.getNormalVector3fMap().normalized();
-    vec3f_t t1 = vec3f_t(p1.data_c[0], p1.data_c[1], p1.data_c[2]);
-    vec3f_t t2 = vec3f_t(p2.data_c[0], p2.data_c[1], p2.data_c[2]);
-    vec3f_t t3 = vec3f_t(p3.data_c[0], p3.data_c[1], p3.data_c[2]);
+    vec3f_t n1 = p1.getNormalVector3fMap();
+    vec3f_t n2 = p2.getNormalVector3fMap();
+    vec3f_t n3 = p3.getNormalVector3fMap();
+    vec3f_t t1 = vec3f_t(p1.data_c[1], p1.data_c[2], p1.data_c[3]);
+    vec3f_t t2 = vec3f_t(p2.data_c[1], p2.data_c[2], p2.data_c[3]);
+    vec3f_t t3 = vec3f_t(p3.data_c[1], p3.data_c[2], p3.data_c[3]);
 
     // Gram-Schmidt
-    //t1 = (t1 - t1.dot(n1) * n1).normalized();
-    //t2 = (t2 - t2.dot(n2) * n2).normalized();
-    //t3 = (t3 - t3.dot(n3) * n3).normalized();
-    //d1 = (d1 - d1.dot(n1) * n1).normalized();
-    //d2 = (d2 - d2.dot(n2) * n2).normalized();
-    //d3 = (d3 - d3.dot(n3) * n3).normalized();
+    t1 = (t1 - t1.dot(n1) * n1).normalized();
+    t2 = (t2 - t2.dot(n2) * n2).normalized();
+    t3 = (t3 - t3.dot(n3) * n3).normalized();
+    d1 = (d1 - d1.dot(n1) * n1).normalized();
+    d2 = (d2 - d2.dot(n2) * n2).normalized();
+    d3 = (d3 - d3.dot(n3) * n3).normalized();
 
     const float f3 = detail::angle(t1, d1);
     const float f4 = detail::angle(t2, d2);
