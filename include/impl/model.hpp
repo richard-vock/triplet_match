@@ -71,8 +71,8 @@ struct model<Point>::impl {
         }
         diameter_ = (bbox.max() - bbox.min()).norm();
 
-        float lower = s_params_.min_triplet_ratio;
-        float upper = s_params_.max_triplet_ratio;
+        //float lower = s_params_.min_triplet_ratio;
+        //float upper = s_params_.max_triplet_ratio;
         float lower_radius = s_params_.min_diameter_factor * diameter_;
         float upper_radius = s_params_.max_diameter_factor * diameter_;
         //float range = upper-lower;
