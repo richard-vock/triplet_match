@@ -78,38 +78,58 @@ angle(const Eigen::Vector3f& a, const Eigen::Vector3f& b) {
     return atan2f(c.norm(), a.dot(b));
 }
 
+inline uint32_t
+discretize(float value, float min_value, float range_value, uint32_t steps) {
+    float nval = (value - min_value) / range_value;
+    if (nval < 0.f) return 0;
+    if (nval >= 1.f) return steps-1;
+    return static_cast<uint32_t>(nval * steps);
+}
+
+inline uint32_t
+discretize(float value, float step_size) {
+    return static_cast<uint32_t>(value / step_size);
+}
+
 } // detail
 
 template <typename Point>
 discrete_feature
-compute_discrete(const Point& p1, const Point& p2, const Point& p3, discretization_params params, float min_dist, float dist_range) {
+compute_discrete(const Point& p1, const Point& p2, const Point& p3, discretization_params params, float min_ratio, float range_ratio) {
     vec3f_t d1 = p2.getVector3fMap() - p1.getVector3fMap();
     vec3f_t d2 = p3.getVector3fMap() - p2.getVector3fMap();
-    float f1 = d2.norm();
     vec3f_t d3 = p3.getVector3fMap() - p1.getVector3fMap();
-    float f2 = d3.norm();
-    //const float f1 = d1.norm();
-    //const float f2 = d3.norm();
+    //const float dist1 = d1.norm();
+    const float dist2 = d2.norm();
+    const float dist3 = d3.norm();
+    const float f1 = dist2;// / dist1;
+    const float f2 = dist3;// / dist1;
 
-    d1.normalize();
-    d2 /= f1;
-    d3 /= f2;
+    //vec3f_t n1 = p1.getNormalVector3fMap().normalized();
+    //vec3f_t n2 = p2.getNormalVector3fMap().normalized();
+    //vec3f_t n3 = p3.getNormalVector3fMap().normalized();
+    vec3f_t t1 = vec3f_t(p1.data_c[0], p1.data_c[1], p1.data_c[2]);
+    vec3f_t t2 = vec3f_t(p2.data_c[0], p2.data_c[1], p2.data_c[2]);
+    vec3f_t t3 = vec3f_t(p3.data_c[0], p3.data_c[1], p3.data_c[2]);
 
-    vec3f_t t1 = p1.getNormalVector3fMap().normalized();
-    vec3f_t t2 = p2.getNormalVector3fMap().normalized();
-    vec3f_t t3 = p3.getNormalVector3fMap().normalized();
+    // Gram-Schmidt
+    //t1 = (t1 - t1.dot(n1) * n1).normalized();
+    //t2 = (t2 - t2.dot(n2) * n2).normalized();
+    //t3 = (t3 - t3.dot(n3) * n3).normalized();
+    //d1 = (d1 - d1.dot(n1) * n1).normalized();
+    //d2 = (d2 - d2.dot(n2) * n2).normalized();
+    //d3 = (d3 - d3.dot(n3) * n3).normalized();
+
     const float f3 = detail::angle(t1, d1);
     const float f4 = detail::angle(t2, d2);
     const float f5 = detail::angle(t3, -d3);
 
     discrete_feature feat;
-    feat[0] = static_cast<uint32_t>(((f1 - min_dist) / dist_range) * params.distance_step_count);
-    if (feat[0] == params.distance_step_count) --feat[0];
-    feat[1] = static_cast<uint32_t>(((f2 - min_dist) / dist_range) * params.distance_step_count);
-    if (feat[1] == params.distance_step_count) --feat[1];
-    feat[2] = static_cast<uint32_t>(f3 / params.angle_step);
-    feat[3] = static_cast<uint32_t>(f4 / params.angle_step);
-    feat[4] = static_cast<uint32_t>(f5 / params.angle_step);
+    feat[0] = detail::discretize(f1, min_ratio, range_ratio, params.distance_step_count);
+    feat[1] = detail::discretize(f2, min_ratio, range_ratio, params.distance_step_count);
+    feat[2] = detail::discretize(f3, params.angle_step);
+    feat[3] = detail::discretize(f4, params.angle_step);
+    feat[4] = detail::discretize(f5, params.angle_step);
     return feat;
 }
 

@@ -1,7 +1,5 @@
-#ifndef NDEBUG
 #include <fstream>
 #include <range/v3/all.hpp>
-#endif // NDEBUG
 
 namespace triplet_match {
 
@@ -35,8 +33,10 @@ struct model<Point>::impl {
             throw std::runtime_error("Cannot query uninitialized model");
         }
 
-        float lower = diameter_ * s_params_.min_diameter_factor;
-        float upper = diameter_ * s_params_.max_diameter_factor;
+        float lower = s_params_.min_diameter_factor * diameter_;
+        float upper = s_params_.max_diameter_factor * diameter_;
+        //float lower = s_params_.min_triplet_ratio;
+        //float upper = s_params_.max_triplet_ratio;
         discrete_feature df = compute_discrete<PointQuery>(p1, p2, p3, params_, lower, upper-lower);
 
         return map_.equal_range(df);
@@ -71,9 +71,11 @@ struct model<Point>::impl {
         }
         diameter_ = (bbox.max() - bbox.min()).norm();
 
-        float lower = diameter_ * s_params_.min_diameter_factor;
-        float upper = diameter_ * s_params_.max_diameter_factor;
-        float range = upper-lower;
+        float lower = s_params_.min_triplet_ratio;
+        float upper = s_params_.max_triplet_ratio;
+        float lower_radius = s_params_.min_diameter_factor * diameter_;
+        float upper_radius = s_params_.max_diameter_factor * diameter_;
+        //float range = upper-lower;
         triplet_count_ = 0;
         for (uint32_t i : valid) {
             const Point& p1 = cloud_->points[i];
@@ -86,8 +88,7 @@ struct model<Point>::impl {
 
                 vec3f_t d1 = p2.getVector3fMap() - p1.getVector3fMap();
                 float dist1 = d1.norm();
-                //d1 /= dist1;
-                if (dist1 < lower || dist1 > upper) {
+                if (dist1 < lower_radius || dist1 > upper_radius) {
                     continue;
                 }
 
@@ -101,12 +102,12 @@ struct model<Point>::impl {
                     vec3f_t d3 = (p3.getVector3fMap() - p1.getVector3fMap());
                     float dist2 = d2.norm();
                     float dist3 = d3.norm();
-                    if (dist2 < lower || dist2 > upper || dist3 < lower || dist3 > upper) {
+                    if (dist2 < lower_radius || dist2 > upper_radius || dist3 < lower_radius || dist3 > upper_radius) {
                         continue;
                     }
-
-                    //float orthogonality = 1.f - fabs(d2.dot(d1));
-                    //if (orthogonality < s_params_.min_orthogonality) {
+                    //float rat0 = dist2 / dist1;
+                    //float rat1 = dist3 / dist1;
+                    //if (rat0 < lower || rat0 > upper || rat1 < lower || rat1 > upper) {
                         //continue;
                     //}
 
@@ -115,7 +116,7 @@ struct model<Point>::impl {
                     used_points_.insert(i);
                     used_points_.insert(j);
                     used_points_.insert(k);
-                    discrete_feature df = compute_discrete<Point>(p1, p2, p3, params_, lower, range);
+                    discrete_feature df = compute_discrete<Point>(p1, p2, p3, params_, lower_radius, upper_radius - lower_radius);
 
                     map_.insert({df, triplet_t{i, j, k}});
                 }
@@ -200,7 +201,6 @@ model<Point>::used_points() const {
     return impl_->used_points_;
 }
 
-#ifndef NDEBUG
 template <typename Point>
 void
 model<Point>::write_octave_density_maps(const std::string& folder, const std::string& data_file_prefix, const std::string& script_file) const {
@@ -259,6 +259,5 @@ model<Point>::write_octave_density_maps(const std::string& folder, const std::st
     }
     out.close();
 }
-#endif // NDEBUG
 
 }  // namespace triplet_match

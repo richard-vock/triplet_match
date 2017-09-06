@@ -10,6 +10,7 @@ namespace detail {
 constexpr bool early_out = true;
 constexpr bool deterministic = true;
 constexpr double match_probability = 0.99;
+constexpr float max_dist_factor = 1.0;
 
 uint64_t
 estimate_sample_count(uint32_t model_size, uint32_t scene_size, double neighborhood_size) {
@@ -88,9 +89,10 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<uint32_t (const mat
             new std::vector<int>(subset.begin(), subset.end()));
     }
     kdtree_.setInputCloud(cloud_, indices);
-    float lower = m.diameter() * params.min_diameter_factor;
-    float upper = m.diameter() * params.max_diameter_factor;
-    lower = lower * lower;
+    float lower = params.min_triplet_ratio;
+    float upper = params.max_triplet_ratio;
+    float lower_radius = params.min_diameter_factor * m.diameter();
+    float upper_radius = params.max_diameter_factor * m.diameter();
 
     std::mt19937 rng;
     uint32_t seed = 13;
@@ -109,16 +111,13 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<uint32_t (const mat
     uint32_t n_scene = indices->size();
     uint64_t outer_bound = static_cast<uint64_t>(std::log(1.0 - detail::match_probability) / std::log(1.0 - static_cast<double>(n_model) / n_scene));
 
-    //auto time = timer::start();
-    //uint64_t corr_meas = 0, corr_meas_count = 0;
-
     for (uint64_t outer = 0; outer < std::min(indices->size(), outer_bound); ++outer) {
         int i = (*indices)[outer];
         const Point& p1 = cloud_->points[i];
 
         std::vector<int> nn;
         std::vector<float> dist;
-        kdtree_.radiusSearch(p1, upper, nn,
+        kdtree_.radiusSearch(p1, upper_radius, nn,
                              dist);
         if (nn.empty()) continue;
         std::shuffle(nn.begin(), nn.end(), rng);
@@ -134,7 +133,8 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<uint32_t (const mat
             const Point& p2 = cloud_->points[j];
 
             vec3f_t d1 = p2.getVector3fMap() - p1.getVector3fMap();
-            if (d1.squaredNorm() < lower) {
+            float dist1 = d1.norm();
+            if (dist1 < lower_radius) {
                 continue;
             }
 
@@ -145,9 +145,16 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<uint32_t (const mat
                 const Point& p3 = cloud_->points[k];
                 vec3f_t d2 = (p3.getVector3fMap() - p2.getVector3fMap());
                 vec3f_t d3 = (p3.getVector3fMap() - p1.getVector3fMap());
-                if (d2.squaredNorm() < lower || d3.squaredNorm() < lower) {
+                float dist2 = d2.norm();
+                float dist3 = d3.norm();
+                if (dist2 < lower_radius || dist3 < lower_radius) {
                     continue;
                 }
+                //float rat0 = dist2 / dist1;
+                //float rat1 = dist3 / dist1;
+                //if (rat0 < lower || rat0 > upper || rat1 < lower || rat1 > upper) {
+                    //continue;
+                //}
 
                 auto && [q_first, q_last] = m.query(p1, p2, p3);
                 if (q_first != q_last) {
@@ -163,15 +170,7 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<uint32_t (const mat
                         static_cast<uint32_t>(i),
                         static_cast<uint32_t>(j),
                         static_cast<uint32_t>(k), m_i, m_j, m_k);
-                    //time->reset();
                     uint32_t score = std::invoke(score_func, transform);
-                    //corr_meas += time->stop<std::chrono::microseconds>();
-                    //++corr_meas_count;
-                    //if (corr_meas_count == 100) {
-                        //std::cout << static_cast<double>(corr_meas) / 100.0 << "us\n";
-                        //corr_meas = 0;
-                        //corr_meas_count = 0;
-                    //}
                     if (score > best_score) {
                         best_transform = transform;
                         best_score = score;
