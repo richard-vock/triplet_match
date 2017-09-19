@@ -3,6 +3,12 @@ namespace vs = voxel_score;
 
 namespace triplet_match {
 
+namespace detail {
+
+constexpr bool gather_stats = true;
+
+} // detail
+
 template <typename Point>
 struct stratified_search<Point>::impl {
     impl(typename cloud_t::ConstPtr cloud, const sample_parameters& sample_params, float model_diameter, float octree_diameter_factor) :
@@ -38,6 +44,10 @@ struct stratified_search<Point>::impl {
         std::vector<mat4f_t> transforms;
         std::vector<subset_t> all_matches;
         std::set<uint32_t> considered;
+
+        typename scene<Point>::statistics stats;
+        stats.rejection_rate = 0.0;
+        uint32_t stat_count = 0;
 
         for (int32_t level = octree_->depth(); level >= 0; --level) {
             std::cout << "############## LEVEL " << level << " #############" << "\n";
@@ -80,7 +90,25 @@ struct stratified_search<Point>::impl {
 
                     mat4f_t t;
                     uint32_t max_score;
-                    std::tie(t, max_score) = scene_->find(m, [&] (const mat4f_t& hyp) { return score_->correspondence_count(hyp, score_correspondence_threshold); }, [&] (uint32_t ccount) { return static_cast<float>(ccount) >= early_out_factor * model_->cloud()->size(); }, sample_params_, subset);
+                    typename scene<Point>::statistics single_stats;
+                    single_stats.rejection_rate = 0.0;
+                    std::tie(t, max_score) = scene_->find(
+                        m,
+                        [&](const mat4f_t& hyp) {
+                            return score_->correspondence_count(
+                                hyp, score_correspondence_threshold);
+                        },
+                        [&](uint32_t ccount) {
+                            return static_cast<float>(ccount) >=
+                                   early_out_factor * model_->cloud()->size();
+                        },
+                        sample_params_, subset,
+                        detail::gather_stats ? &stats : nullptr);
+
+                    if (detail::gather_stats) {
+                        double delta = single_stats.rejection_rate - stats.rejection_rate;
+                        stats.rejection_rate += delta / (++stat_count);
+                    }
 
                     if (max_score < min_points) {
                         break;
@@ -99,6 +127,11 @@ struct stratified_search<Point>::impl {
                 }
                 std::cout << (transforms.size() - before) << " transformations found.\n";
             });
+        }
+
+        if (detail::gather_stats) {
+            std::cout << "Statistics:" << "\n";
+            std::cout << "   Rejection Rate: " << std::setprecision(2) << (stats.rejection_rate * 100.0) << "\n";
         }
 
         return {transforms, all_matches};

@@ -98,11 +98,16 @@ discrete_feature
 compute_discrete(const Point& p1, const Point& p2, const Point& p3, discretization_params params, float min_ratio, float range_ratio) {
     vec3f_t d1 = p2.getVector3fMap() - p1.getVector3fMap();
     vec3f_t d2 = p3.getVector3fMap() - p2.getVector3fMap();
-    float f1 = d2.norm();
     vec3f_t d3 = p3.getVector3fMap() - p1.getVector3fMap();
-    float f2 = d3.norm();
+    //float f1 = d2.norm();
+    //float f2 = d3.norm();
     //const float f1 = d1.norm();
     //const float f2 = d3.norm();
+    const float dist1 = d1.norm();
+    const float dist2 = d2.norm();
+    const float dist3 = d3.norm();
+    const float f1  = dist2/dist1;
+    const float f2  = dist3/dist1;
 
     vec3f_t n1 = p1.getNormalVector3fMap();
     vec3f_t n2 = p2.getNormalVector3fMap();

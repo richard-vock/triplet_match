@@ -33,11 +33,12 @@ struct model<Point>::impl {
             throw std::runtime_error("Cannot query uninitialized model");
         }
 
-        float lower = diameter_ * s_params_.min_diameter_factor;
-        float upper = diameter_ * s_params_.max_diameter_factor;
-        //float lower_ratio = s_params_.min_triplet_ratio;
-        //float upper_ratio = s_params_.max_triplet_ratio;
-        discrete_feature df = compute_discrete<PointQuery>(p1, p2, p3, params_, lower, upper-lower);
+        //float lower = diameter_ * s_params_.min_diameter_factor;
+        //float upper = diameter_ * s_params_.max_diameter_factor;
+        //discrete_feature df = compute_discrete<PointQuery>(p1, p2, p3, params_, lower, upper-lower);
+        float lower_ratio = s_params_.min_triplet_ratio;
+        float upper_ratio = s_params_.max_triplet_ratio;
+        discrete_feature df = compute_discrete<PointQuery>(p1, p2, p3, params_, lower_ratio, upper_ratio-lower_ratio);
 
         return map_.equal_range(df);
     }
@@ -73,10 +74,10 @@ struct model<Point>::impl {
 
         float lower = diameter_ * s_params_.min_diameter_factor;
         float upper = diameter_ * s_params_.max_diameter_factor;
-        float range = upper-lower;
-        //float lower_ratio = s_params_.min_triplet_ratio;
-        //float upper_ratio = s_params_.max_triplet_ratio;
-        //float range_ratio = upper_ratio - lower_ratio;
+        //float range = upper-lower;
+        float lower_ratio = s_params_.min_triplet_ratio;
+        float upper_ratio = s_params_.max_triplet_ratio;
+        float range_ratio = upper_ratio - lower_ratio;
         triplet_count_ = 0;
         for (uint32_t i : valid) {
             const Point& p1 = cloud_->points[i];
@@ -106,18 +107,18 @@ struct model<Point>::impl {
                     if (dist2 < lower || dist2 > upper || dist3 < lower || dist3 > upper) {
                         continue;
                     }
-                    //float rat0 = dist2 / dist1;
-                    //float rat1 = dist3 / dist1;
-                    //if (rat0 < lower || rat0 > upper || rat1 < lower || rat1 > upper) {
-                        //continue;
-                    //}
+                    float rat0 = dist2 / dist1;
+                    float rat1 = dist3 / dist1;
+                    if (rat0 < lower_ratio || rat0 > upper_ratio || rat1 < lower_ratio || rat1 > upper_ratio) {
+                        continue;
+                    }
 
                     ++triplet_count_;
 
                     used_points_.insert(i);
                     used_points_.insert(j);
                     used_points_.insert(k);
-                    discrete_feature df = compute_discrete<Point>(p1, p2, p3, params_, lower, range);
+                    discrete_feature df = compute_discrete<Point>(p1, p2, p3, params_, lower_ratio, range_ratio);
 
                     map_.insert({df, triplet_t{i, j, k}});
                 }

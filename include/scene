@@ -19,6 +19,10 @@ public:
 
     typedef pcl::PointCloud<Point> cloud_t;
 
+    struct statistics {
+        double rejection_rate;
+    };
+
 public:
     scene(typename cloud_t::ConstPtr cloud);
 
@@ -28,14 +32,14 @@ public:
               typename EarlyOutFunctor>
     mat4f_t find(model<PointModel>& m, ScoreFunctor&& score_func,
                  EarlyOutFunctor&& early_out_func,
-                 const sample_parameters& sample_params);
+                 const sample_parameters& sample_params, statistics* stats = nullptr);
 
     template <typename PointModel, typename ScoreFunctor,
               typename EarlyOutFunctor>
     std::pair<mat4f_t, uint32_t>
     find(model<PointModel>& m, ScoreFunctor&& score_func,
          EarlyOutFunctor&& early_out_func,
-         const sample_parameters& sample_params, const subset_t& subset);
+         const sample_parameters& sample_params, const subset_t& subset, statistics* stats = nullptr);
 
     typename cloud_t::ConstPtr cloud() const;
 
