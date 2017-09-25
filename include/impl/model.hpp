@@ -27,18 +27,15 @@ struct model<Point>::impl {
     }
 
     template <typename PointQuery>
-    std::pair<triplet_iter_t, triplet_iter_t>
-    query(const PointQuery& p1, const PointQuery& p2, const PointQuery& p3) {
+    std::pair<pair_iter_t, pair_iter_t>
+    query(const PointQuery& p1, const PointQuery& p2) {
         if (!init_) {
             throw std::runtime_error("Cannot query uninitialized model");
         }
 
-        //float lower = diameter_ * s_params_.min_diameter_factor;
-        //float upper = diameter_ * s_params_.max_diameter_factor;
-        //discrete_feature df = compute_discrete<PointQuery>(p1, p2, p3, params_, lower, upper-lower);
-        float lower_ratio = s_params_.min_triplet_ratio;
-        float upper_ratio = s_params_.max_triplet_ratio;
-        discrete_feature df = compute_discrete<PointQuery>(p1, p2, p3, params_, lower_ratio, upper_ratio-lower_ratio);
+        float lower = diameter_ * s_params_.min_diameter_factor;
+        float upper = diameter_ * s_params_.max_diameter_factor;
+        discrete_feature df = compute_discrete<PointQuery>(p1, p2, params_, lower, upper-lower);
 
         return map_.equal_range(df);
     }
@@ -51,8 +48,8 @@ struct model<Point>::impl {
         return point_count_;
     }
 
-    uint64_t triplet_count() const {
-        return triplet_count_;
+    uint64_t pair_count() const {
+        return pair_count_;
     }
 
     typename cloud_t::ConstPtr cloud() const {
@@ -75,10 +72,7 @@ struct model<Point>::impl {
         float lower = diameter_ * s_params_.min_diameter_factor;
         float upper = diameter_ * s_params_.max_diameter_factor;
         //float range = upper-lower;
-        float lower_ratio = s_params_.min_triplet_ratio;
-        float upper_ratio = s_params_.max_triplet_ratio;
-        float range_ratio = upper_ratio - lower_ratio;
-        triplet_count_ = 0;
+        pair_count_ = 0;
         for (uint32_t i : valid) {
             const Point& p1 = cloud_->points[i];
 
@@ -88,40 +82,19 @@ struct model<Point>::impl {
                     continue;
                 }
 
-                vec3f_t d1 = p2.getVector3fMap() - p1.getVector3fMap();
-                float dist1 = d1.norm();
-                if (dist1 < lower || dist1 > upper) {
+                vec3f_t d = p2.getVector3fMap() - p1.getVector3fMap();
+                float dist = d.norm();
+                if (dist < lower || dist > upper) {
                     continue;
                 }
 
-                for (uint32_t k : valid) {
-                    const Point& p3 = cloud_->points[k];
-                    if (i == k || j == k) {
-                        continue;
-                    }
+                ++pair_count_;
 
-                    vec3f_t d2 = (p3.getVector3fMap() - p2.getVector3fMap());
-                    vec3f_t d3 = (p3.getVector3fMap() - p1.getVector3fMap());
-                    float dist2 = d2.norm();
-                    float dist3 = d3.norm();
-                    if (dist2 < lower || dist2 > upper || dist3 < lower || dist3 > upper) {
-                        continue;
-                    }
-                    float rat0 = dist2 / dist1;
-                    float rat1 = dist3 / dist1;
-                    if (rat0 < lower_ratio || rat0 > upper_ratio || rat1 < lower_ratio || rat1 > upper_ratio) {
-                        continue;
-                    }
+                used_points_.insert(i);
+                used_points_.insert(j);
+                discrete_feature df = compute_discrete<Point>(p1, p2, params_, lower, upper-lower);
 
-                    ++triplet_count_;
-
-                    used_points_.insert(i);
-                    used_points_.insert(j);
-                    used_points_.insert(k);
-                    discrete_feature df = compute_discrete<Point>(p1, p2, p3, params_, lower_ratio, range_ratio);
-
-                    map_.insert({df, triplet_t{i, j, k}});
-                }
+                map_.insert({df, pair_t{i, j}});
             }
         }
 
@@ -138,7 +111,7 @@ struct model<Point>::impl {
     hash_map_t map_;
     float diameter_;
     uint32_t point_count_;
-    uint64_t triplet_count_;
+    uint64_t pair_count_;
     std::set<uint32_t> used_points_;
 };
 
@@ -168,9 +141,9 @@ model<Point>::init(const subset_t& subset, const sample_parameters& sample_param
 
 template <typename Point>
 template <typename PointQuery>
-inline std::pair<typename model<Point>::triplet_iter_t, typename model<Point>::triplet_iter_t>
-model<Point>::query(const PointQuery& p1, const PointQuery& p2, const PointQuery& p3) {
-    return range<triplet_iter_t>(impl_->template query<PointQuery>(p1, p2, p3));
+inline std::pair<typename model<Point>::pair_iter_t, typename model<Point>::pair_iter_t>
+model<Point>::query(const PointQuery& p1, const PointQuery& p2) {
+    return range<pair_iter_t>(impl_->template query<PointQuery>(p1, p2));
 }
 
 template <typename Point>
@@ -187,8 +160,8 @@ model<Point>::point_count() const {
 
 template <typename Point>
 inline uint64_t
-model<Point>::triplet_count() const {
-    return impl_->triplet_count();
+model<Point>::pair_count() const {
+    return impl_->pair_count();
 }
 
 template <typename Point>

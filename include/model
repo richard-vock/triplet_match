@@ -19,9 +19,9 @@ public:
     typedef std::weak_ptr<const model<Point>> const_wptr_t;
 
     typedef pcl::PointCloud<Point> cloud_t;
-    typedef std::tuple<uint32_t, uint32_t, uint32_t> triplet_t;
-    typedef std::unordered_map<discrete_feature, triplet_t> hash_map_t;
-    typedef typename hash_map_t::const_iterator triplet_iter_t;
+    typedef std::pair<uint32_t, uint32_t> pair_t;
+    typedef std::unordered_map<discrete_feature, pair_t> hash_map_t;
+    typedef typename hash_map_t::const_iterator pair_iter_t;
 
 public:
     model(typename cloud_t::ConstPtr cloud, discretization_params params);
@@ -35,14 +35,14 @@ public:
     init(const subset_t& subset, const sample_parameters& sample_params);
 
     template <typename PointQuery>
-    std::pair<triplet_iter_t, triplet_iter_t>
-    query(const PointQuery& p1, const PointQuery& p2, const PointQuery& p3);
+    std::pair<pair_iter_t, pair_iter_t>
+    query(const PointQuery& p1, const PointQuery& p2);
 
     float diameter() const;
 
     uint32_t point_count() const;
 
-    uint64_t triplet_count() const;
+    uint64_t pair_count() const;
 
     typename cloud_t::ConstPtr cloud() const;
 

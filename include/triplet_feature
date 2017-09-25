@@ -3,7 +3,7 @@
 
 namespace triplet_match {
 
-struct discrete_feature : Eigen::Matrix<unsigned int, 5, 1> {
+struct discrete_feature : Eigen::Matrix<unsigned int, 4, 1> {
 };
 
 struct discretization_params {
@@ -13,7 +13,7 @@ struct discretization_params {
 
 template <typename Point>
 discrete_feature
-compute_discrete(const Point& p1, const Point& p2, const Point& p3, discretization_params params, float min_dist, float dist_range);
+compute_discrete(const Point& p1, const Point& p2, discretization_params params, float min_dist, float dist_range);
 
 } // triplet_match
 

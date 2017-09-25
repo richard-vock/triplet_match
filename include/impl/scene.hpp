@@ -15,14 +15,15 @@ constexpr bool allow_scale = false;
 
 template <typename Point>
 inline mat3f_t
-make_base(typename pcl::PointCloud<Point>::ConstPtr cloud, int i, int j, int k, float& s) {
+make_base(typename pcl::PointCloud<Point>::ConstPtr cloud, int i, int j) {
     vec3f_t p0 = cloud->points[i].getVector3fMap();
     vec3f_t p1 = cloud->points[j].getVector3fMap();
-    vec3f_t p2 = cloud->points[k].getVector3fMap();
-    vec3f_t e0 = (p1 - p0);
-    s = e0.norm();
-    e0 /= s;
-    vec3f_t e1 = p2 - p0;
+
+    // d
+    vec3f_t e0 = (p1 - p0).normalized();
+    // tangent
+    vec3f_t e1(cloud->points[i].data_c[1], cloud->points[i].data_c[2], cloud->points[i].data_c[3]);
+
     vec3f_t e2 = e0.cross(e1).normalized();
     e1 = e2.cross(e0).normalized();
     mat3f_t base;
@@ -45,11 +46,9 @@ base_rotation(const mat3f_t& b0, const mat3f_t& b1) {
 
 template <typename Point0, typename Point1>
 inline mat4f_t
-base_transformation(typename pcl::PointCloud<Point0>::ConstPtr c0, typename pcl::PointCloud<Point1>::ConstPtr c1, uint32_t i0, uint32_t j0,
-                     uint32_t k0, uint32_t i1, uint32_t j1, uint32_t k1) {
-    float s0, s1;
-    auto b0 = make_base<Point0>(c0, i0, j0, k0, s0);
-    auto b1 = make_base<Point1>(c1, i1, j1, k1, s1);
+base_transformation(typename pcl::PointCloud<Point0>::ConstPtr c0, typename pcl::PointCloud<Point1>::ConstPtr c1, uint32_t i0, uint32_t j0, uint32_t i1, uint32_t j1) {
+    auto b0 = make_base<Point0>(c0, i0, j0);
+    auto b1 = make_base<Point1>(c1, i1, j1);
     mat4f_t r = mat4f_t::Identity();
     mat4f_t t = mat4f_t::Identity();
 
@@ -59,12 +58,6 @@ base_transformation(typename pcl::PointCloud<Point0>::ConstPtr c0, typename pcl:
     // rotation * translate first
     t.block<3,1>(0,3) = -c0->points[i0].getVector3fMap();
     r = r * t;
-
-    // scale * rotation * translate first
-    if (detail::allow_scale) {
-        float scale = s1 / s0;
-        r.block<3,4>(0,0) *= scale;
-    }
 
     // translate second * scale * rotation * translate first
     t.block<3,1>(0,3) = c1->points[i1].getVector3fMap();
@@ -102,8 +95,6 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<uint32_t (const mat
         lower *= params.search_min_scale;
         upper *= params.search_max_scale;
     }
-    float lower_ratio = params.min_triplet_ratio;
-    float upper_ratio = params.max_triplet_ratio;
 
     std::mt19937 rng;
     uint32_t seed = 13;
@@ -143,58 +134,33 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<uint32_t (const mat
 
             const Point& p2 = cloud_->points[j];
 
-            vec3f_t d1 = p2.getVector3fMap() - p1.getVector3fMap();
-            float dist1 = d1.norm();
-            if (dist1 < lower) {
+            vec3f_t d = p2.getVector3fMap() - p1.getVector3fMap();
+            float dist = d.norm();
+            if (dist < lower) {
                 continue;
             }
 
-            for (uint64_t inner1 = 0; inner1 < inner_bound; ++inner1) {
-                int k = nn[inner1];
-                if (k == j || k == i) continue;
+            auto && [q_first, q_last] = m.query(p1, p2);
+            if (q_first != q_last) {
+                ++valid_sample_count;
+            }
 
-                const Point& p3 = cloud_->points[k];
-                vec3f_t d2 = (p3.getVector3fMap() - p2.getVector3fMap());
-                vec3f_t d3 = (p3.getVector3fMap() - p1.getVector3fMap());
-                float dist2 = d2.norm();
-                float dist3 = d3.norm();
-                if (dist2 < lower || dist3 < lower) {
-                    continue;
-                }
-                float rat0 = dist2 / dist1;
-                float rat1 = dist3 / dist1;
-                if (rat0 < lower_ratio || rat0 > upper_ratio || rat1 < lower_ratio || rat1 > upper_ratio) {
-                    continue;
-                }
+            ++sample_count;
+            for (auto it = q_first; it != q_last; ++it) {
+                auto&& [m_i, m_j] = it->second;
 
-                auto && [q_first, q_last] = m.query(p1, p2, p3);
-                if (q_first != q_last) {
-                    ++valid_sample_count;
-                }
+                mat4f_t transform = detail::base_transformation<PointModel, Point>(
+                    cloud_, m.cloud(),
+                    static_cast<uint32_t>(i),
+                    static_cast<uint32_t>(j),
+                    m_i, m_j);
+                uint32_t score = std::invoke(score_func, transform);
+                if (score > best_score) {
+                    best_transform = transform;
+                    best_score = score;
 
-                ++sample_count;
-                for (auto it = q_first; it != q_last; ++it) {
-                    auto&& [m_i, m_j, m_k] = it->second;
-
-                    //float scale = (m.cloud()->points[m_j] - m.cloud()->points[m_i]).norm();
-                    //scale = dist1 / scale;
-                    //if (scale < params.search_min_scale || scale > params.search_max_scale) {
-                    //    continue;
-                    //}
-
-                    mat4f_t transform = detail::base_transformation<PointModel, Point>(
-                        cloud_, m.cloud(),
-                        static_cast<uint32_t>(i),
-                        static_cast<uint32_t>(j),
-                        static_cast<uint32_t>(k), m_i, m_j, m_k);
-                    uint32_t score = std::invoke(score_func, transform);
-                    if (score > best_score) {
-                        best_transform = transform;
-                        best_score = score;
-
-                        if (detail::early_out && early_out_func(best_score)) {
-                            return {transform, best_score};
-                        }
+                    if (detail::early_out && early_out_func(best_score)) {
+                        return {transform, best_score};
                     }
                 }
             }
