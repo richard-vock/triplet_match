@@ -95,23 +95,25 @@ discretize(float value, float step_size) {
 
 template <typename Point>
 discrete_feature
-compute_discrete(const Point& p1, const Point& p2, discretization_params params, float min_dist, float range_dist) {
-    vec3f_t d = p2.getVector3fMap() - p1.getVector3fMap();
-    const float f1 = d.norm();
-    d /= f1;
+compute_discrete(const Point& p1, const Point& p2, const vec2f_t& uv1, const vec2f_t& uv2, discretization_params params, float min_dist, float range_dist) {
+    const float f1 = (uv2 - uv1).norm();
 
     vec3f_t t1 = vec3f_t(p1.data_c[1], p1.data_c[2], p1.data_c[3]);
     vec3f_t t2 = vec3f_t(p2.data_c[1], p2.data_c[2], p2.data_c[3]);
+    vec3f_t n1 = p1.getNormalVector3fMap();
+    vec3f_t n2 = p2.getNormalVector3fMap();
+    t1 -= t1.dot(n1) * n1;
+    t2 -= t2.dot(n2) * n2;
+    t1.normalize();
+    t2.normalize();
 
     const float f2 = detail::angle(t1, t2);
-    const float f3 = detail::angle(t1, d);
-    const float f4 = detail::angle(t2, d);
 
     discrete_feature feat;
     feat[0] = detail::discretize(f1, min_dist, range_dist, params.distance_step_count);
     feat[1] = detail::discretize(f2, params.angle_step);
-    feat[2] = detail::discretize(f3, params.angle_step);
-    feat[3] = detail::discretize(f4, params.angle_step);
+    //feat[2] = detail::discretize(f3, params.angle_step);
+    //feat[3] = detail::discretize(f4, params.angle_step);
     return feat;
 }
 

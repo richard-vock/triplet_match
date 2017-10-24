@@ -5,6 +5,7 @@
 
 #include "common"
 #include "model"
+#include "cylinder"
 
 namespace triplet_match {
 
@@ -18,30 +19,35 @@ public:
     typedef std::weak_ptr<const scene<Point>> const_wptr_t;
 
     typedef pcl::PointCloud<Point> cloud_t;
+    typedef gpu::vector<gpu::float4_> gpu_data_t;
 
     struct statistics {
         double rejection_rate;
     };
 
+    typedef cylinder<Point> projector_t;
+
 public:
-    scene(typename cloud_t::ConstPtr cloud);
+    scene(typename cloud_t::ConstPtr cloud, gpu_state::sptr_t state);
 
     virtual ~scene();
 
-    template <typename PointModel, typename ScoreFunctor,
-              typename EarlyOutFunctor>
-    mat4f_t find(model<PointModel>& m, ScoreFunctor&& score_func,
-                 EarlyOutFunctor&& early_out_func,
-                 const sample_parameters& sample_params, statistics* stats = nullptr);
+    void init(model<Point>& m, float max_corr_dist);
 
-    template <typename PointModel, typename ScoreFunctor,
-              typename EarlyOutFunctor>
+    //mat4f_t
+    //find(model<Point>& m, uint32_t early_out_threshold,
+    //     const sample_parameters& sample_params, statistics* stats = nullptr);
+
     std::pair<mat4f_t, uint32_t>
-    find(model<PointModel>& m, ScoreFunctor&& score_func,
-         EarlyOutFunctor&& early_out_func,
-         const sample_parameters& sample_params, const subset_t& subset, statistics* stats = nullptr);
+    find(model<Point>& m, uint32_t early_out_threshold,
+         const sample_parameters& sample_params, const subset_t& subset = subset_t(),
+         statistics* stats = nullptr);
 
     typename cloud_t::ConstPtr cloud() const;
+
+    //gpu_data_t& device_data();
+
+    //const gpu_data_t& device_data() const;
 
 protected:
     struct impl;
@@ -51,7 +57,6 @@ protected:
 
 }  // namespace triplet_match
 
-#include "scene.ipp"
 #ifndef TRIPLET_MATCH_PRECOMPILE_HEADERS
 #include "impl/scene.hpp"
 #endif // TRIPLET_MATCH_PRECOMPILE_HEADERS

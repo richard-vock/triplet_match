@@ -6,6 +6,7 @@
 #include "common"
 #include "range"
 #include "triplet_feature"
+#include "cylinder"
 
 namespace triplet_match {
 
@@ -22,34 +23,51 @@ public:
     typedef std::pair<uint32_t, uint32_t> pair_t;
     typedef std::unordered_map<discrete_feature, pair_t> hash_map_t;
     typedef typename hash_map_t::const_iterator pair_iter_t;
+    typedef gpu::vector<gpu::float4_> gpu_data_t;
+    typedef std::vector<gpu::float4_> cpu_data_t;
+
+    typedef cylinder<Point> projector_t;
 
 public:
-    model(typename cloud_t::ConstPtr cloud, discretization_params params);
+    model(typename cloud_t::ConstPtr cloud, projector_t projector, discretization_params params);
 
     virtual ~model();
 
     std::future<void>
-    init(const sample_parameters& sample_params);
+    init(const sample_parameters& sample_params, gpu_state::sptr_t state);
 
     std::future<void>
-    init(const subset_t& subset, const sample_parameters& sample_params);
+    init(const subset_t& subset, const sample_parameters& sample_params, gpu_state::sptr_t state);
 
-    template <typename PointQuery>
     std::pair<pair_iter_t, pair_iter_t>
-    query(const PointQuery& p1, const PointQuery& p2);
+    query(const Point& p1, const Point& p2, const vec2f_t& uv1, const vec2f_t& uv2);
+
+    const projector_t& projector() const;
+
+    const mat4f_t& normalization() const;
 
     float diameter() const;
 
+    float resolution() const;
+
+    vec3f_t centroid() const;
+
     uint32_t point_count() const;
+
+    const vec2i_t& extents() const;
 
     uint64_t pair_count() const;
 
     typename cloud_t::ConstPtr cloud() const;
 
-    std::set<uint32_t> used_points() const;
+    gpu_data_t& device_data();
 
-    void
-    write_octave_density_maps(const std::string& folder, const std::string& data_file_prefix, const std::string& script_file) const;
+    const gpu_data_t& device_data() const;
+
+    const cpu_data_t& host_data() const;
+
+    //void
+    //write_octave_density_maps(const std::string& folder, const std::string& data_file_prefix, const std::string& script_file) const;
 
 protected:
     struct impl;

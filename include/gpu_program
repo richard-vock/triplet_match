@@ -1,0 +1,43 @@
+#ifndef _TRIPLET_MATCH_GPU_PROGRAM_
+#define _TRIPLET_MATCH_GPU_PROGRAM_
+
+#include "common"
+
+namespace triplet_match {
+
+struct no_arg_t {};
+constexpr no_arg_t no_arg;
+
+class gpu_program {
+    public:
+        typedef std::unique_ptr<gpu_program>       uptr_t;
+        typedef std::shared_ptr<gpu_program>       sptr_t;
+        typedef std::weak_ptr<gpu_program>         wptr_t;
+        typedef std::shared_ptr<const gpu_program> const_sptr_t;
+        typedef std::weak_ptr<const gpu_program>   const_wptr_t;
+
+    public:
+        gpu_program(gpu_state::sptr_t state);
+
+        virtual ~gpu_program();
+
+        template <typename... Args>
+        void
+        compile(Args&&... files);
+
+        template <typename... Args>
+        gpu::kernel
+        kernel(std::string function_name, Args&&... args);
+
+    protected:
+        gpu_state::sptr_t state_;
+        gpu::program program_;
+};
+
+}  // namespace triplet_match
+
+#include "gpu_program.ipp"
+
+#endif /* _TRIPLET_MATCH_GPU_PROGRAM_ */
+
+// vim: syntax=cpp

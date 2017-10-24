@@ -5,4 +5,10 @@
 #define VERSION_MINOR @triplet_match_VERSION_MINOR@
 #cmakedefine TRIPLET_MATCH_PRECOMPILE_HEADERS
 
+#if defined(WIN32) || defined(_WIN32) || defined(__WIN32)
+#define OPENCL_PREFIX "opencl/"
+#else
+#define OPENCL_PREFIX "@CMAKE_INSTALL_PREFIX@/include/triplet_match/opencl/"
+#endif
+
 #endif // TRIPLET_MATCH_CMAKE_CONFIG_H

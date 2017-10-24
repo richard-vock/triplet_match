@@ -1,5 +1,4 @@
 #include <scene>
-namespace vs = voxel_score;
 
 namespace triplet_match {
 
@@ -13,9 +12,11 @@ template <typename Point>
 struct stratified_search<Point>::impl {
     impl(typename cloud_t::ConstPtr cloud, const sample_parameters& sample_params, float model_diameter, float octree_diameter_factor) :
         cloud_(cloud),
-        sample_params_(sample_params),
-        scene_(new scene<Point>(cloud)) {
+        sample_params_(sample_params) {
         octree_ = octree_t::from_pointcloud(cloud_, 10, min_voxel_size{octree_diameter_factor * model_diameter});
+
+        gstate_ = std::make_shared<gpu_state>();
+        scene_ = std::make_unique<scene<Point>>(cloud, gstate_);
 
         valid_subset_.resize(cloud_->size());
         std::iota(valid_subset_.begin(), valid_subset_.end(), 0);
@@ -27,20 +28,17 @@ struct stratified_search<Point>::impl {
     void
     set_model(typename model<Point>::sptr_t m) {
         model_ = m;
-
-        // create score functor
-        gstate_ = std::make_shared<vs::gpu_state>();
-        score_ = std::make_unique<vs::score_functor<Point, Point>>(gstate_);
-        score_->set_model(model_->cloud(), 100, 0.01f);
-        score_->set_scene(scene_->cloud());
     }
 
     template <typename PointModel>
     std::pair<std::vector<mat4f_t>, std::vector<subset_t>>
     find_all(model<PointModel>& m, float model_match_factor, float score_correspondence_threshold, float early_out_factor) {
-        if (!score_) {
+        if (!model_) {
             throw std::runtime_error("stratified_search::find(): Model not set");
         }
+
+        scene_->init(m, 0.01f);
+
         std::vector<mat4f_t> transforms;
         std::vector<subset_t> all_matches;
         std::set<uint32_t> considered;
@@ -94,14 +92,7 @@ struct stratified_search<Point>::impl {
                     single_stats.rejection_rate = 0.0;
                     std::tie(t, max_score) = scene_->find(
                         m,
-                        [&](const mat4f_t& hyp) {
-                            return score_->correspondence_count(
-                                hyp, score_correspondence_threshold);
-                        },
-                        [&](uint32_t ccount) {
-                            return static_cast<float>(ccount) >=
-                                   early_out_factor * model_->cloud()->size();
-                        },
+                        early_out_factor * model_->cloud()->size(),
                         sample_params_, subset,
                         detail::gather_stats ? &stats : nullptr);
 
@@ -110,20 +101,22 @@ struct stratified_search<Point>::impl {
                         stats.rejection_rate += delta / (++stat_count);
                     }
 
+                    std::cout << "score: " << max_score << "\n";
+
                     if (max_score < min_points) {
                         break;
                     }
 
-                    std::vector<int> matches;
-                    std::tie(t, matches) = score_->icp(t, score_correspondence_threshold, 0);
+                    //std::vector<int> matches;
+                    //std::tie(t, matches) = score_->icp(t, score_correspondence_threshold, 0);
 
                     // transform is good enough
-                    subset_t new_subset;
-                    std::set_difference(subset.begin(), subset.end(), matches.begin(), matches.end(), std::back_inserter(new_subset));
-                    subset = new_subset;
-                    considered.insert(matches.begin(), matches.end());
-                    all_matches.push_back(subset_t(matches.begin(), matches.end()));
-                    transforms.push_back(t.inverse());
+                    //subset_t new_subset;
+                    //std::set_difference(subset.begin(), subset.end(), matches.begin(), matches.end(), std::back_inserter(new_subset));
+                    //subset = new_subset;
+                    //considered.insert(matches.begin(), matches.end());
+                    //all_matches.push_back(subset_t(matches.begin(), matches.end()));
+                    //transforms.push_back(t.inverse());
                 }
                 std::cout << (transforms.size() - before) << " transformations found.\n";
             });
@@ -145,19 +138,13 @@ struct stratified_search<Point>::impl {
         return octree_;
     }
 
-    vs::score_functor<Point, Point>&
-    get_score_functor() {
-        return *score_;
-    }
-
     typename cloud_t::ConstPtr cloud_;
     sample_parameters sample_params_;
     typename octree_t::sptr_t octree_;
     typename scene<Point>::uptr_t scene_;
     typename model<Point>::sptr_t model_;
     subset_t valid_subset_;
-    vs::gpu_state::sptr_t gstate_;
-    typename vs::score_functor<Point, Point>::uptr_t score_;
+    gpu_state::sptr_t gstate_;
 };
 
 template <typename Point>
@@ -193,12 +180,6 @@ template <typename Point>
 inline typename stratified_search<Point>::octree_t::const_sptr_t
 stratified_search<Point>::get_octree() const {
     return impl_->get_octree();
-}
-
-template <typename Point>
-inline voxel_score::score_functor<Point, Point>&
-stratified_search<Point>::get_score_functor() {
-    return impl_->get_score_functor();
 }
 
 } // triplet_match

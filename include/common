@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <future>
 #include <functional>
+#include <iostream>
 
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
@@ -14,10 +15,23 @@
 #include <pcl/point_types.h>
 #include <pcl/search/kdtree.h>
 
+#include <boost/compute.hpp>
+
+#include <fmt/format.h>
+#include <range/v3/all.hpp>
+namespace vw  = ranges::view;
+namespace act = ranges::action;
+
 #include "config"
 
 namespace triplet_match {
 
+namespace gpu = boost::compute;
+
+typedef Eigen::Vector2f vec2f_t;
+typedef Eigen::RowVector2f rvec2f_t;
+typedef Eigen::Vector2i vec2i_t;
+typedef Eigen::RowVector2i rvec2i_t;
 typedef Eigen::Vector3f vec3f_t;
 typedef Eigen::RowVector3f rvec3f_t;
 typedef Eigen::Vector3i vec3i_t;
@@ -32,11 +46,22 @@ typedef Eigen::AlignedBox<float, 3> bbox3_t;
 typedef Eigen::Array3f arr3f_t;
 typedef Eigen::Array3i arr3i_t;
 
+typedef Eigen::AlignedBox<float, 2> bbox2_t;
 typedef Eigen::AlignedBox<float, 3> bbox3_t;
 
-typedef Eigen::Quaternionf quat_t;
+typedef Eigen::Quaternionf quatf_t;
 
 typedef std::vector<uint32_t> subset_t;
+
+struct gpu_state {
+    typedef std::shared_ptr<gpu_state> sptr_t;
+
+    gpu_state();
+
+    gpu::device device;
+    gpu::context context;
+    gpu::command_queue queue;
+};
 
 struct sample_parameters {
     float min_triplet_ratio;
