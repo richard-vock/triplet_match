@@ -39,11 +39,12 @@ cylinder<Point>::fit(typename cloud_t::ConstPtr cloud, const subset_t& subset) {
         ref.cross(axis_).transpose(),
         axis_.transpose();
 
-    float rinv = 1.f / radius_;
+    //float rinv = 1.f / radius_;
 
-    mat3f_t scale = vec3f_t(rinv, rinv, rinv).asDiagonal();
+    //mat3f_t scale = vec3f_t(rinv, rinv, rinv).asDiagonal();
     proj_ = mat4f_t::Identity();
-    proj_.topLeftCorner<3, 3>() = scale * base;
+    //proj_.topLeftCorner<3, 3>() = scale * base;
+    proj_.topLeftCorner<3, 3>() = base;
     proj_.block<3,1>(0,3) = proj_.topLeftCorner<3, 3>() * (-origin_);
     inv_ = proj_.inverse();
 }
@@ -86,9 +87,10 @@ cylinder<Point>::fit(const Point& sample1, const Point& sample2) {
 
     //float rinv = 1.f / radius_;
 
-    mat3f_t scale = vec3f_t::Constant(1.f / radius_).asDiagonal();
+    //mat3f_t scale = vec3f_t::Constant(1.f / radius_).asDiagonal();
     proj_ = mat4f_t::Identity();
-    proj_.topLeftCorner<3, 3>() = scale * base;
+    //proj_.topLeftCorner<3, 3>() = scale * base;
+    proj_.topLeftCorner<3, 3>() = base;
     proj_.block<3,1>(0,3) = proj_.topLeftCorner<3, 3>() * (-origin_);
     inv_ = proj_.inverse();
 }
@@ -134,7 +136,7 @@ cylinder<Point>::project(const vec3f_t& pos) const {
     }
     u /= static_cast<float>(2.0 * M_PI);
     float v = local[2];
-    float w = local.head(2).norm();
+    float w = local.head(2).norm() - 1.f;
     return vec3f_t(u, v, w);
 }
 
@@ -160,6 +162,22 @@ cylinder<Point>::unproject(const vec3f_t& pos) const {
     local[2] = pos[1];
     local[3] = 1.f;
     return (inv_ * local).head(3);
+}
+
+template <typename Point>
+inline vec2f_t
+cylinder<Point>::intrinsic_difference(const vec3f_t& pos0, const vec3f_t& pos1, bool debug) const {
+    vec3f_t l0 =  (proj_ * pos0.homogeneous()).head(3);
+    vec3f_t l1 =  (proj_ * pos1.homogeneous()).head(3);
+    float v = std::abs(l1[2] - l0[2]);
+    if (debug) pdebug("   l0: {},   l1: {}", l0.transpose(), l1.transpose());
+    if (debug) pdebug("   v: {}", v);
+    l0[2] = 0.f;
+    l1[2] = 0.f;
+    l0.normalize();
+    l1.normalize();
+    float u = radius_ * std::acos(l0.dot(l1)) / M_PI;
+    return vec2f_t(u, v);
 }
 
 template <typename Point>

@@ -40,7 +40,10 @@ public:
     init(const subset_t& subset, const sample_parameters& sample_params, gpu_state::sptr_t state);
 
     std::pair<pair_iter_t, pair_iter_t>
-    query(const Point& p1, const Point& p2, const vec2f_t& uv1, const vec2f_t& uv2);
+    query(const Point& p1, const Point& p2, vec2f_t dist, bool debug = false);
+
+    typename cloud_t::Ptr
+    instantiate(const mat4f_t& rigid, const mat4f_t& uvw_transform = mat4f_t::Identity()) const;
 
     const projector_t& projector() const;
 
@@ -55,6 +58,8 @@ public:
     uint32_t point_count() const;
 
     const vec2i_t& extents() const;
+
+    const vec2i_t& margin() const;
 
     uint64_t pair_count() const;
 

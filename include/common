@@ -18,6 +18,7 @@
 #include <boost/compute.hpp>
 
 #include <fmt/format.h>
+#include <fmt/ostream.h>
 #include <range/v3/all.hpp>
 namespace vw  = ranges::view;
 namespace act = ranges::action;
@@ -80,6 +81,19 @@ struct overloaded : Ts... {
 };
 template <class... Ts>
 overloaded(Ts...)->overloaded<Ts...>;
+
+template <typename... Args>
+inline void pdebug(const char *format, const Args & ... args) {
+    fmt::print("[D] ");
+    fmt::print(format, args...);
+    putchar('\n');
+}
+
+template <typename... Args>
+inline void println(const char *format, const Args & ... args) {
+    fmt::print(format, args...);
+    putchar('\n');
+}
 
 } // triplet_match
 

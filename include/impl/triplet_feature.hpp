@@ -95,8 +95,10 @@ discretize(float value, float step_size) {
 
 template <typename Point>
 discrete_feature
-compute_discrete(const Point& p1, const Point& p2, const vec2f_t& uv1, const vec2f_t& uv2, discretization_params params, float min_dist, float range_dist) {
-    const float f1 = (uv2 - uv1).norm();
+compute_discrete(const Point& p1, const Point& p2, const vec2f_t& dist, discretization_params params, float min_dist, float range_dist, bool debug) {
+    const float f1 = dist.norm();
+
+    if (debug) pdebug("f1: ||{}|| = {}", dist.transpose(), f1);
 
     vec3f_t t1 = vec3f_t(p1.data_c[1], p1.data_c[2], p1.data_c[3]);
     vec3f_t t2 = vec3f_t(p2.data_c[1], p2.data_c[2], p2.data_c[3]);

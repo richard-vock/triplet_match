@@ -19,7 +19,6 @@ install (DIRECTORY opencl/ DESTINATION include/triplet_match/opencl)
 
 if (TRIPLET_MATCH_PRECOMPILE_HEADERS)
     find_package(PCL COMPONENTS common io search kdtree)
-    find_package(VoxelScore)
     find_package(Eigen3)
     find_package(OpenCL)
     find_package(fmt)

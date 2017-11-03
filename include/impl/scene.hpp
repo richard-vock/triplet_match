@@ -148,7 +148,7 @@ constexpr char program_source[] =
 
 template <typename Point>
 struct scene<Point>::impl {
-    impl(typename cloud_t::ConstPtr cloud, gpu_state::sptr_t state) : cloud_(cloud), state_(state), program_(state), projection_(16, state->context), normalization_(16, state->context), transform_(16, state->context) {}
+    impl(typename cloud_t::ConstPtr cloud, gpu_state::sptr_t state) : cloud_(cloud), state_(state), program_(state), projection_(16, state->context), normalization_(16, state->context), transform_(16, state->context), uvw_transform_(16, state->context) {}
 
     ~impl() {
     }
@@ -178,18 +178,23 @@ struct scene<Point>::impl {
         // setup projection kernel
         uint32_t n = gpu_data_.size();
         vec2i_t ext = m.extents();
+        vec2i_t margin = m.margin();
         projector_t model_proj = m.projector();
         gpu::eigen_copy_matrix_to_buffer(model_proj.projection_matrix(), projection_.begin(), state_->queue);
         gpu::eigen_copy_matrix_to_buffer(m.normalization(), normalization_.begin(), state_->queue);
         model_corrs_ = gpu::vector<int>(n, state_->context);
         scene_corrs_ = gpu::vector<int>(n, state_->context);
         positions_ = gpu::vector<gpu::float4_>(n, state_->context);
+        corr_matrices_ = gpu::vector<gpu::float16_>(n, this->state_->context);
+
         proj_kernel_ = program_.kernel(
             "icp_projection",
             gpu_data_.get_buffer(),
             n,
             m.device_data().get_buffer(),
             gpu::int2_(ext[0], ext[1]),
+            gpu::int2_(margin[0], margin[1]),
+            no_arg,
             no_arg,
             projection_.get_buffer(),
             normalization_.get_buffer(),
@@ -199,6 +204,18 @@ struct scene<Point>::impl {
             scene_corrs_.get_buffer()
         );
 
+        corr_kernel_ = program_.kernel(
+            "icp_correlation",
+            positions_.get_buffer(),
+            m.device_data().get_buffer(),
+            scene_corrs_.get_buffer(),
+            model_corrs_.get_buffer(),
+            no_arg,
+            no_arg,
+            no_arg,
+            corr_matrices_.get_buffer()
+        );
+
         global_threads_ = n;
         int res = n % detail::threads_per_block;
         if (res) {
@@ -206,8 +223,8 @@ struct scene<Point>::impl {
         }
     }
 
-    std::pair<mat4f_t, uint32_t>
-    find(model<Point>& m, uint32_t early_out_threshold, const sample_parameters& params, subset_t subset, statistics* stats) {
+    std::tuple<mat4f_t, mat4f_t, uint32_t>
+    find(model<Point>& m, uint32_t accept_threshold, uint32_t early_out_threshold, const sample_parameters& params, uint32_t max_icp_iterations, subset_t subset, statistics* stats) {
         pcl::IndicesPtr indices;
         if (subset.empty()) {
             indices = pcl::IndicesPtr(new std::vector<int>(cloud_->size()));
@@ -217,8 +234,8 @@ struct scene<Point>::impl {
                 new std::vector<int>(subset.begin(), subset.end()));
         }
         kdtree_.setInputCloud(cloud_, indices);
-        float lower = params.min_diameter_factor;
-        float upper = params.max_diameter_factor;
+        //float lower = params.min_diameter_factor;
+        float upper = m.diameter() * params.max_diameter_factor;
 
         std::mt19937 rng;
         uint32_t seed = 13;
@@ -228,7 +245,7 @@ struct scene<Point>::impl {
         }
         rng.seed(seed);
         std::shuffle(indices->begin(), indices->end(), rng);
-        // DEBUG: remove this line
+        // DEBUG
         (*indices)[0] = 0;
 
         uint32_t best_score = 0;
@@ -263,48 +280,65 @@ struct scene<Point>::impl {
                 int j = nn[inner0];
                 if (j == i) continue;
 
+                bool debug = j == 265;
+
                 projector_t proj(0.f);
+
 
                 const Point& p2 = cloud_->points[j];
                 proj.fit(p1, p2);
 
-                vec2f_t uv1 = proj.project(p1.getVector3fMap()).head(2);
-                vec2f_t uv2 = proj.project(p2.getVector3fMap()).head(2);
-
-                vec2f_t d = uv2 - uv1;
-                float dist = d.norm();
-                if (dist < lower || dist > upper) {
-                    continue;
+                if (debug) {
+                    pdebug("   scene normals:");
+                    pdebug("   n0: {}", p1.getNormalVector3fMap().transpose());
+                    pdebug("   n1: {}", p2.getNormalVector3fMap().transpose());
+                    pdebug("   axis: {}", proj.axis().transpose());
+                    pdebug("   dot: {}", p2.getNormalVector3fMap().dot(p1.getNormalVector3fMap()));
                 }
 
-                auto && [q_first, q_last] = m.query(p1, p2, uv1, uv2);
+                //fmt::print("sample pair {} {}\n", i, j);
+
+                if (debug) pdebug("scene descriptor");
+                vec2f_t d = proj.intrinsic_difference(p1.getVector3fMap(), p2.getVector3fMap(), debug);
+
+                auto && [q_first, q_last] = m.query(p1, p2, d, debug);
                 if (q_first != q_last) {
                     ++valid_sample_count;
                 }
 
                 ++sample_count;
                 for (auto it = q_first; it != q_last; ++it) {
-                    //auto m_i = it->second.first;
-                    auto && [m_i, m_j] = it->second;
+                    auto m_i = it->second.first;
+                    //auto [m_i, m_j] = it->second;
 
-                    if (static_cast<int>(m_i) == i && static_cast<int>(m_j) == j) {
-                        mat4f_t transform = proj.transform_to(m.projector(), p1.getVector3fMap(), m.cloud()->points[m_i].getVector3fMap());
-                        uint32_t score = correspondence_count_(m, proj, transform);
-                        return {transform, score};
-                    }
-
-                    //mat4f_t transform = proj.transform_to(m.projector(), p1.getVector3fMap(), cloud_->points[m_i].getVector3fMap());
-                    //uint32_t score = correspondence_count_(m, proj, transform);
-                    //if (score > best_score) {
-                        //best_transform = transform;
-                        //best_score = score;
-
-                        //if (detail::early_out && best_score > early_out_threshold) {
-                            //return {transform, best_score, projector_t(0.f)};
-                        //}
+                    //if (i == static_cast<int>(m_i) && j == static_cast<int>(m_j)) {
+                    //if (m_i == 0) {
+                        //pdebug("    model pair {} {}", m_i, m_j);
+                        //pdebug("    desc {}", it->first.transpose());
                     //}
+
+                    mat4f_t transform = proj.transform_to(m.projector(), p1.getVector3fMap(), m.cloud()->points[m_i].getVector3fMap());
+                    uint32_t score = correspondence_count_(m, proj, transform);
+                    //fmt::print("score: {}\n", score);
+
+                    if (score > best_score) {
+                        best_transform = transform;
+                        best_score = score;
+
+                        fmt::print("improved score: {}\n", best_score);
+
+                        if (detail::early_out && best_score > early_out_threshold) {
+                            fmt::print("early out at: {} of {} points\n", best_score, m.cloud()->size());
+                            mat4f_t uvw_transform;
+                            std::tie(uvw_transform, std::ignore) = icp_(m, transform, max_icp_iterations);
+                            return {transform, uvw_transform, best_score};
+                        }
+                    }
                 }
             }
+
+            // DEBUG
+            break;
         }
 
         if (stats) {
@@ -313,14 +347,49 @@ struct scene<Point>::impl {
                 sample_count;
         }
 
-        return {best_transform, best_score};
+        mat4f_t uvw_transform;
+        std::tie(uvw_transform, std::ignore) = icp_(m, best_transform, max_icp_iterations);
+        return {best_transform, uvw_transform, best_score};
     }
 
     void
-    project_(model<Point>& m, const mat4f_t& transform) {
-        gpu::eigen_copy_matrix_to_buffer(transform, this->transform_.begin(), this->state_->queue);
-        proj_kernel_.set_arg(4, this->transform_.get_buffer());
+    project_(model<Point>& m, const mat4f_t& transform, const mat4f_t& uvw_transform = mat4f_t::Identity()) {
+        gpu::eigen_copy_matrix_to_buffer(transform, transform_.begin(), state_->queue);
+        proj_kernel_.set_arg(5, transform_.get_buffer());
+        gpu::eigen_copy_matrix_to_buffer(uvw_transform, uvw_transform_.begin(), state_->queue);
+        proj_kernel_.set_arg(6, uvw_transform_.get_buffer());
         state_->queue.enqueue_1d_range_kernel(proj_kernel_, 0, global_threads_, detail::threads_per_block);
+
+        std::vector<gpu::float4_> positions(positions_.size());
+        //std::vector<int> model_corrs(positions_.size());
+        gpu::copy(positions_.begin(), positions_.end(), positions.begin(), state_->queue);
+        //gpu::copy(model_corrs_.begin(), model_corrs_.end(), model_corrs.begin(), state_->queue);
+        for (uint32_t i = 0; i < positions.size(); ++i) {
+            //fmt::print("pos: {} {} {}\n", positions[i][0], positions[i][1], positions[i][2]);
+            ////if (model_corrs[i] >= 0) {
+            if (positions[i][3] > 0.f) {
+                //fmt::print("dist: {}\n", positions[i][3]);
+            }
+        }
+    }
+
+    template <typename IndexIterator>
+    gpu::float4_ compute_centroid_(gpu::vector<gpu::float4_>& data, IndexIterator begin, IndexIterator end) {
+        gpu::float4_ result;
+        gpu::reduce(
+            gpu::make_permutation_iterator(data.begin(), begin),
+            gpu::make_permutation_iterator(gpu::make_buffer_iterator<gpu::float4_>(data.get_buffer(), end.get_index()), end),
+            &result,
+            this->state_->queue
+        );
+        float inv_count = 1.f / end.get_index();
+        result[0] *= inv_count;
+        result[1] *= inv_count;
+        result[2] *= inv_count;
+        //result[0] /= result[3];
+        //result[1] /= result[3];
+        //result[2] /= result[3];
+        return result;
     }
 
     uint32_t
@@ -335,6 +404,80 @@ struct scene<Point>::impl {
         gpu::transform_reduce(scene_corrs_.begin(), scene_corrs_.end(), &sum, indicator, gpu::plus<int>(), this->state_->queue);
 
         return sum;
+    }
+
+    std::pair<mat4f_t, std::vector<int>>
+    icp_(model<Point>& m, const mat4f_t& transform, uint32_t max_iterations) {
+        project_(m, transform);
+
+        gpu::buffer_iterator<int> valid_model;
+        gpu::buffer_iterator<int> valid_scene;
+
+        valid_model = gpu::stable_partition(
+            model_corrs_.begin(), model_corrs_.end(),
+            boost::compute::lambda::_1 >= 0, this->state_->queue);
+        valid_scene = gpu::stable_partition(
+            scene_corrs_.begin(), scene_corrs_.end(),
+            boost::compute::lambda::_1 >= 0, this->state_->queue);
+
+        mat4f_t uvw_transform = mat4f_t::Identity();
+        for (uint32_t i = 0; i < max_iterations; ++i) {
+            uint32_t n_model = valid_model.get_index();
+            uint32_t n_scene = valid_scene.get_index();
+            if (!n_model) {
+                // no correspondences
+                return {mat4f_t::Identity(), std::vector<int>()};
+            }
+            int threads = n_scene;
+            int res = n_scene % detail::threads_per_block;
+            if (res) {
+                threads += detail::threads_per_block - res;
+            }
+
+            // compute centroids
+            gpu::float4_ centroid_scene =
+                compute_centroid_(positions_, scene_corrs_.begin(), valid_scene);
+            gpu::float4_ centroid_model =
+                compute_centroid_(m.device_data(),
+                                  model_corrs_.begin(), valid_model);
+
+            // coll correlation kernel
+            corr_kernel_.set_arg(4, n_scene);
+            corr_kernel_.set_arg(5, centroid_scene);
+            corr_kernel_.set_arg(6, centroid_model);
+            this->state_->queue.enqueue_1d_range_kernel(corr_kernel_, 0, threads, detail::threads_per_block);
+            // sum of per-point correlation matrices
+            gpu::float16_ corr_16;
+            gpu::reduce(corr_matrices_.begin(), gpu::make_buffer_iterator<gpu::float16_>(corr_matrices_.get_buffer(), n_scene), &corr_16, this->state_->queue);
+            mat3f_t corr_matrix;
+            for (int i = 0; i < 9; ++i) {
+                corr_matrix.data()[i] = corr_16[i];
+            }
+
+            // compute SVD for rotation estimation
+            Eigen::JacobiSVD<mat3f_t> svd(corr_matrix, Eigen::ComputeFullU | Eigen::ComputeFullV);
+            mat4f_t icp_mat = mat4f_t::Identity();
+            icp_mat.topLeftCorner<3,3>() = svd.matrixV() * svd.matrixU().transpose();
+            vec3f_t cm(centroid_model[0], centroid_model[1], centroid_model[2]);
+            vec3f_t cs(centroid_scene[0], centroid_scene[1], centroid_scene[2]);
+            icp_mat.block<3,1>(0,3) = cm - icp_mat.topLeftCorner<3,3>() * cs;
+
+            // update and reproject for correct correspondences
+            uvw_transform = icp_mat * uvw_transform;
+            project_(m, transform, uvw_transform);
+            valid_model = gpu::stable_partition(
+                model_corrs_.begin(), model_corrs_.end(),
+                boost::compute::lambda::_1 >= 0, this->state_->queue);
+            valid_scene = gpu::stable_partition(
+                scene_corrs_.begin(), scene_corrs_.end(),
+                boost::compute::lambda::_1 >= 0, this->state_->queue);
+        }
+
+        uint32_t n_scene = valid_scene.get_index();
+        std::vector<int> corr(n_scene);
+        gpu::copy(scene_corrs_.begin(), valid_scene, corr.begin(), this->state_->queue);
+
+        return {uvw_transform, corr};
     }
 
     typename cloud_t::ConstPtr cloud() const {
@@ -356,11 +499,14 @@ struct scene<Point>::impl {
 
     gpu_program program_;
     gpu::kernel proj_kernel_;
+    gpu::kernel corr_kernel_;
     int global_threads_;
     gpu::vector<float> projection_;
     gpu::vector<float> normalization_;
     gpu::vector<float> transform_;
+    gpu::vector<float> uvw_transform_;
     gpu::vector<gpu::float4_> positions_;
+    gpu::vector<gpu::float16_> corr_matrices_;
     gpu::vector<int> model_corrs_;
     gpu::vector<int> scene_corrs_;
 };
@@ -389,9 +535,9 @@ scene<Point>::init(model<Point>& m, float max_corr_dist) {
 //}
 
 template <typename Point>
-inline std::pair<mat4f_t, uint32_t>
-scene<Point>::find(model<Point>& m, uint32_t early_out_threshold, const sample_parameters& sample_params, const subset_t& subset, statistics* stats) {
-    return impl_->find(m, early_out_threshold, sample_params, subset, stats);
+inline std::tuple<mat4f_t, mat4f_t, uint32_t>
+scene<Point>::find(model<Point>& m, uint32_t accept_threshold, uint32_t early_out_threshold, const sample_parameters& sample_params, uint32_t max_icp_iterations, const subset_t& subset, statistics* stats) {
+    return impl_->find(m, accept_threshold, early_out_threshold, sample_params, max_icp_iterations, subset, stats);
 }
 
 template <typename Point>

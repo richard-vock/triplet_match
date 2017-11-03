@@ -37,6 +37,8 @@ public:
 
     vec3f_t unproject(const vec3f_t& pos) const;
 
+    vec2f_t intrinsic_difference(const vec3f_t& pos0, const vec3f_t& pos1, bool debug = false) const;
+
     vec3f_t& origin();
 
     const vec3f_t& origin() const;

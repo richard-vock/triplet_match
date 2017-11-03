@@ -50,14 +50,17 @@ struct model<Point>::impl {
     }
 
     std::pair<pair_iter_t, pair_iter_t>
-    query(const Point& p1, const Point& p2, const vec2f_t& uv1, const vec2f_t& uv2) {
+    query(const Point& p1, const Point& p2, vec2f_t dist, bool debug) {
         if (!init_) {
             throw std::runtime_error("Cannot query uninitialized model");
         }
 
-        float lower = s_params_.min_diameter_factor;
-        float upper = s_params_.max_diameter_factor;
-        discrete_feature df = compute_discrete<Point>(p1, p2, uv1, uv2, params_, lower, upper-lower);
+        //float lower = s_params_.min_diameter_factor;
+
+        dist[0] = (dist[0] - min_u_) / (max_u_ - min_u_);
+        dist[1] = (dist[1] - min_v_) / (max_v_ - min_v_);
+
+        discrete_feature df = compute_discrete<Point>(p1, p2, dist, params_, 0.1f, 0.9f, debug);
 
         return map_.equal_range(df);
     }
@@ -80,6 +83,10 @@ struct model<Point>::impl {
 
     const vec2i_t& extents() const {
         return extents_;
+    }
+
+    const vec2i_t& margin() const {
+        return margin_;
     }
 
     vec3f_t centroid() const {
@@ -129,7 +136,9 @@ struct model<Point>::impl {
         point_count_ = valid.size();
         diameter_ = (bbox.max() - bbox.min()).norm();
         resolution_ = detail::estimate_resolution(kdtree);
-        extents_ = vec2i_t(2000, 500);
+        margin_ = vec2i_t(50, 50);
+        vec2i_t ext = vec2i_t(2000, 500);
+        extents_ = ext + 2 * margin_;
         cpu_data_.resize(extents_[0] * extents_[1]);
 
         bbox2_t bbox_uv;
@@ -158,11 +167,13 @@ struct model<Point>::impl {
         //std::map<int, std::vector<std::pair<float, vec3f_t>>> debug_data;
         Eigen::MatrixXf img = -Eigen::MatrixXf::Ones(extents_[1], extents_[0]);
         for (int j = 0; j < extents_[1]; ++j) {
-            float v = lower + range * static_cast<float>(j) / extents_[1];
+            float v_n = static_cast<float>(j - margin_[1]) / (ext[1] - 1);
+
+            float v = lower + range * v_n;
 
             int x = j * extents_[0];
             for (int i = 0; i < extents_[0]; ++i) {
-                float u = static_cast<float>(i) / extents_[0];
+                float u = static_cast<float>(i - margin_[0]) / (ext[0] - 1);
                 Point query;
                 query.getVector3fMap() = projector_.unproject(vec2f_t(u, v));
 
@@ -172,9 +183,13 @@ struct model<Point>::impl {
                 //distance_data_[x + y + k] =
                     //max_integer_dist * (sqrtf(dists[0]) / max_dist);
                 vec3f_t neigh = cloud_->points[nns[0]].getVector3fMap();
-                cpu_data_[x + i][0] = neigh[0];
-                cpu_data_[x + i][1] = neigh[1];
-                cpu_data_[x + i][2] = neigh[2];
+
+                vec3f_t proj_neigh = projector_.project(neigh);
+                proj_neigh = (normalize_ * proj_neigh.homogeneous()).head(3);
+
+                cpu_data_[x + i][0] = proj_neigh[0];
+                cpu_data_[x + i][1] = proj_neigh[1];
+                cpu_data_[x + i][2] = proj_neigh[2];
                 cpu_data_[x + i][3] = 1.f;
 
                 if (sqrtf(dists[0] < 0.0005f)) {
@@ -203,24 +218,48 @@ struct model<Point>::impl {
 
         to_grayscale_image("/tmp/model.pgm", img);
 
-        lower = /* diameter_ */ s_params_.min_diameter_factor;
-        upper = /* diameter_ */ s_params_.max_diameter_factor;
+        //lower = /* diameter_ */ s_params_.min_diameter_factor;
+        //upper = /* diameter_ */ s_params_.max_diameter_factor;
         //float range = upper-lower;
+        max_u_ = 0.f;
+        max_v_ = 0.f;
+        min_u_ = std::numeric_limits<float>::max();
+        min_v_ = std::numeric_limits<float>::max();
+        for (uint32_t i : valid) {
+            const Point& p1 = cloud_->points[i];
+            for (uint32_t j : valid) {
+                const Point& p2 = cloud_->points[j];
+                vec2f_t d = projector_.intrinsic_difference(p1.getVector3fMap(), p2.getVector3fMap());
+                min_u_ = std::min(d[0], min_u_);
+                min_v_ = std::min(d[1], min_v_);
+                max_u_ = std::max(d[0], max_u_);
+                max_v_ = std::max(d[1], max_v_);
+            }
+        }
+        float range_u = max_u_ - min_u_;
+        float range_v = max_v_ - min_v_;
         pair_count_ = 0;
         for (uint32_t i : valid) {
             const Point& p1 = cloud_->points[i];
-            vec2f_t uv1 = projector_.project(p1.getVector3fMap()).head(2);
+            //vec2f_t uv1 = projector_.project(p1.getVector3fMap()).head(2);
 
             for (uint32_t j : valid) {
                 if (i == j) {
                     continue;
                 }
                 const Point& p2 = cloud_->points[j];
-                vec2f_t uv2 = projector_.project(p2.getVector3fMap()).head(2);
+                //vec2f_t uv2 = projector_.project(p2.getVector3fMap()).head(2);
 
-                vec2f_t d = uv2 - uv1;
-                float dist = d.norm();
-                if (dist < lower || dist > upper) {
+                bool debug = i == 0 && j == 265;
+                if (debug) {
+                    pdebug("model descriptor");
+                    pdebug("    proj: {}", projector_.axis().transpose());
+                }
+                vec2f_t d = projector_.intrinsic_difference(p1.getVector3fMap(), p2.getVector3fMap(), debug);
+                d[0] = (d[0] - min_u_) / range_u;
+                d[1] = (d[1] - min_v_) / range_v;
+
+                if (d[0] < 0.1f || d[0] > 1.f || d[1] < 0.1f || d[1] > 1.f) {
                     continue;
                 }
 
@@ -228,8 +267,7 @@ struct model<Point>::impl {
 
                 //used_points_.insert(i);
                 //used_points_.insert(j);
-                discrete_feature df = compute_discrete<Point>(p1, p2, uv1, uv2, params_, lower, upper-lower);
-
+                discrete_feature df = compute_discrete<Point>(p1, p2, d, params_, 0.1f, 0.9f, debug);
                 map_.insert({df, pair_t{i, j}});
             }
         }
@@ -242,10 +280,45 @@ struct model<Point>::impl {
         init_ = true;
     }
 
+    typename cloud_t::Ptr
+    instantiate(const mat4f_t& rigid, const mat4f_t& uvw_transform) const {
+        mat4f_t inv_norm = normalize_.inverse();
+
+        typename cloud_t::Ptr result(new cloud_t());
+        result->resize(cloud_->size());
+        for (uint32_t idx = 0; idx < cloud_->size(); ++idx) {
+            vec4f_t p = cloud_->points[idx].getVector3fMap().homogeneous();
+
+            // project into normalized uvw space
+            p.head(3) = projector_.project(p.head(3));
+            p = normalize_ * p;
+
+            // distort
+            p = uvw_transform * p;
+
+            vec3f_t unnorm = (inv_norm * p).head(3);
+
+            // unproject
+            p.head(3) = projector_.unproject(unnorm);
+
+            // rigid transform into scene
+            p = rigid * p;
+
+            result->points[idx].getVector3fMap() = p.head(3);
+        }
+
+        return result;
+    }
+
     typename cloud_t::ConstPtr cloud_;
     projector_t projector_;
     discretization_params params_;
     bool init_;
+
+    float min_u_;
+    float min_v_;
+    float max_u_;
+    float max_v_;
 
     gpu_state::sptr_t state_;
     subset_t subset_;
@@ -256,6 +329,7 @@ struct model<Point>::impl {
     vec3f_t centroid_;
     uint32_t point_count_;
     vec2i_t extents_;
+    vec2i_t margin_;
     uint64_t pair_count_;
     cpu_data_t cpu_data_;
     gpu_data_t gpu_data_;
@@ -289,8 +363,14 @@ model<Point>::init(const subset_t& subset, const sample_parameters& sample_param
 
 template <typename Point>
 inline std::pair<typename model<Point>::pair_iter_t, typename model<Point>::pair_iter_t>
-model<Point>::query(const Point& p1, const Point& p2, const vec2f_t& uv1, const vec2f_t& uv2) {
-    return range<pair_iter_t>(impl_->query(p1, p2, uv1, uv2));
+model<Point>::query(const Point& p1, const Point& p2, vec2f_t dist, bool debug) {
+    return range<pair_iter_t>(impl_->query(p1, p2, std::move(dist), debug));
+}
+
+template <typename Point>
+inline typename model<Point>::cloud_t::Ptr
+model<Point>::instantiate(const mat4f_t& rigid, const mat4f_t& uvw_transform) const {
+    return impl_->instantiate(rigid, uvw_transform);
 }
 
 template <typename Point>
@@ -333,6 +413,12 @@ template <typename Point>
 inline const vec2i_t&
 model<Point>::extents() const {
     return impl_->extents();
+}
+
+template <typename Point>
+inline const vec2i_t&
+model<Point>::margin() const {
+    return impl_->margin();
 }
 
 template <typename Point>

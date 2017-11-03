@@ -18,7 +18,7 @@ float4 uv_project(float4 loc, __global const float* cyl2ncoord) {
     float v = nc.z;
 
     // w = height deviation on cylinder surface = radius deviation
-    float w = length(nc.xy);
+    float w = length(nc.xy) - 1.0;
 
     // return as homogeneous coordinate
     return (float4)(u, v, w, 1.f);

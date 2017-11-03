@@ -38,9 +38,9 @@ public:
     //find(model<Point>& m, uint32_t early_out_threshold,
     //     const sample_parameters& sample_params, statistics* stats = nullptr);
 
-    std::pair<mat4f_t, uint32_t>
-    find(model<Point>& m, uint32_t early_out_threshold,
-         const sample_parameters& sample_params, const subset_t& subset = subset_t(),
+    std::tuple<mat4f_t, mat4f_t, uint32_t>
+    find(model<Point>& m, uint32_t accept_threshold, uint32_t early_out_threshold,
+         const sample_parameters& sample_params, uint32_t max_icp_iterations, const subset_t& subset = subset_t(),
          statistics* stats = nullptr);
 
     typename cloud_t::ConstPtr cloud() const;

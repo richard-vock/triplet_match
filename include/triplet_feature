@@ -13,7 +13,7 @@ struct discretization_params {
 
 template <typename Point>
 discrete_feature
-compute_discrete(const Point& p1, const Point& p2, const vec2f_t& uv1, const vec2f_t& uv2, discretization_params params, float min_dist, float dist_range);
+compute_discrete(const Point& p1, const Point& p2, const vec2f_t& dist, discretization_params params, float min_dist, float dist_range, bool debug = false);
 
 } // triplet_match
 
