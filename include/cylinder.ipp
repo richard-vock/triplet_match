@@ -177,6 +177,7 @@ cylinder<Point>::intrinsic_difference(const vec3f_t& pos0, const vec3f_t& pos1, 
     l0.normalize();
     l1.normalize();
     float u = radius_ * std::acos(l0.dot(l1)) / M_PI;
+    if (debug) pdebug("   u: {}", u);
     return vec2f_t(u, v);
 }
 
