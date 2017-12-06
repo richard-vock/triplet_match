@@ -78,6 +78,11 @@ angle(const Eigen::Vector3f& a, const Eigen::Vector3f& b) {
     return atan2f(c.norm(), a.dot(b));
 }
 
+inline float
+angle_unsigned(const Eigen::Vector3f& a, const Eigen::Vector3f& b) {
+    return std::acos(fabs(a.dot(b)));
+}
+
 inline uint32_t
 discretize(float value, float min_value, float range_value, uint32_t steps) {
     float nval = (value - min_value) / range_value;

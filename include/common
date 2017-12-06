@@ -7,6 +7,10 @@
 #include <algorithm>
 #include <future>
 #include <functional>
+#include <range/v3/all.hpp>
+
+#include <fmt/format.h>
+#include <fmt/ostream.h>
 
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
@@ -39,10 +43,6 @@ typedef Eigen::Quaternionf quat_t;
 typedef std::vector<uint32_t> subset_t;
 
 struct sample_parameters {
-    float min_triplet_ratio;
-    float max_triplet_ratio;
-    float search_min_scale;
-    float search_max_scale;
     float min_diameter_factor;
     float max_diameter_factor;
     float min_orthogonality;
@@ -55,6 +55,24 @@ struct overloaded : Ts... {
 };
 template <class... Ts>
 overloaded(Ts...)->overloaded<Ts...>;
+
+template <typename Rng>
+auto indexed(Rng&& rng, uint32_t start = 0u) {
+    return ranges::view::zip(ranges::view::ints(start), std::forward<Rng>(rng));
+}
+
+template <typename... Args>
+inline void pdebug(const char *format, const Args & ... args) {
+    fmt::print("[D] ");
+    fmt::print(format, args...);
+    putchar('\n');
+}
+
+template <typename... Args>
+inline void println(const char *format, const Args & ... args) {
+    fmt::print(format, args...);
+    putchar('\n');
+}
 
 } // triplet_match
 
