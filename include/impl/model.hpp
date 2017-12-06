@@ -62,7 +62,8 @@ struct model<Point>::impl {
         std::set<uint32_t> valid;
         for (uint32_t i : subset_) {
             const Point& p = cloud_->points[i];
-            if (pcl::isFinite(p)) {
+            float nrm_len = cloud_->points[i].getNormalVector3fMap().norm();
+            if (pcl::isFinite(p) && fabs(1.f - nrm_len) < 0.01f) {
                 valid.insert(i);
                 bbox.extend(p.getVector3fMap());
             }

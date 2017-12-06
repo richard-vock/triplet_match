@@ -10,8 +10,8 @@ namespace detail {
 constexpr bool early_out = true;
 constexpr bool deterministic = true;
 constexpr double match_probability = 0.99;
-constexpr float max_dist_factor = 1.0;
-constexpr bool allow_scale = false;
+constexpr uint64_t min_outer_size = 20ul;
+constexpr uint64_t min_inner_size = 2ul;
 
 template <typename Point>
 inline mat3f_t
@@ -91,10 +91,7 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<uint32_t (const mat
     kdtree_.setInputCloud(cloud_, indices);
     float lower = m.diameter() * params.min_diameter_factor;
     float upper = m.diameter() * params.max_diameter_factor;
-    if (detail::allow_scale) {
-        lower *= params.search_min_scale;
-        upper *= params.search_max_scale;
-    }
+    
 
     std::mt19937 rng;
     uint32_t seed = 13;
@@ -109,12 +106,17 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<uint32_t (const mat
     uint32_t best_score = 0;
     uint64_t valid_sample_count = 0, sample_count = 0;
 
-    uint32_t n_model = m.cloud()->size();
+    uint32_t n_model = m.point_count();
     uint32_t n_scene = indices->size();
     uint64_t outer_bound = static_cast<uint64_t>(std::log(1.0 - detail::match_probability) / std::log(1.0 - static_cast<double>(n_model) / n_scene));
+    outer_bound = std::max(outer_bound, detail::min_outer_size);
 
-    for (uint64_t outer = 0; outer < std::min(indices->size(), outer_bound); ++outer) {
-        int i = (*indices)[outer];
+
+    uint64_t outer_limit = std::min(indices->size(), outer_bound);
+    //pdebug("outer bound: {}, limit: {}", outer_bound, outer_limit);
+    for (uint64_t outer_index = 0; outer_index < outer_limit; ++outer_index) {
+        //pdebug("progress: {} / {}", outer_valid, outer_limit);
+        int i = (*indices)[outer_index];
         const Point& p1 = cloud_->points[i];
 
         std::vector<int> nn;
@@ -126,10 +128,14 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<uint32_t (const mat
 
         double prob = static_cast<double>(n_model) / nn.size();
         uint64_t inner_bound = static_cast<uint64_t>(-std::log(1.0 - detail::match_probability) / prob);
-        inner_bound = std::min(inner_bound, nn.size());
+        uint64_t inner_limit = std::max(inner_bound, detail::min_inner_size);
+        inner_limit = std::min(nn.size(), inner_limit);
 
-        for (uint64_t inner0 = 0; inner0 < inner_bound; ++inner0) {
-            int j = nn[inner0];
+        for (uint32_t inner_index = 0; inner_index < inner_limit; ++inner_index) {
+        //uint32_t inner_valid = 0, inner_index = 0;
+        //while (inner_valid < inner_limit && inner_index < nn.size()) {
+            int j = nn[inner_index];
+            //++inner_index;
             if (j == i) continue;
 
             const Point& p2 = cloud_->points[j];
@@ -140,9 +146,15 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<uint32_t (const mat
                 continue;
             }
 
+            // colinearity threshold
+            if (1.f - fabs(p2.getNormalVector3fMap().dot(p1.getNormalVector3fMap())) < 0.3f) {
+                continue;
+            }
+
             auto && [q_first, q_last] = m.query(p1, p2);
             if (q_first != q_last) {
                 ++valid_sample_count;
+                //++inner_valid;
             }
 
             ++sample_count;
@@ -160,11 +172,14 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<uint32_t (const mat
                     best_score = score;
 
                     if (detail::early_out && early_out_func(best_score)) {
+                        pdebug("early out at {} valid points", best_score);
                         return {transform, best_score};
                     }
                 }
             }
         }
+
+        //pdebug("drew {} samples for a bound of {}", inner_index+1, inner_limit+1);
     }
 
     if (stats) {

@@ -7,6 +7,9 @@ namespace detail {
 
 constexpr bool gather_stats = true;
 
+constexpr bool correspondence_on_all = false;
+constexpr bool icp_on_all = false;
+
 } // detail
 
 template <typename Point>
@@ -15,7 +18,14 @@ struct stratified_search<Point>::impl {
         cloud_(cloud),
         sample_params_(sample_params),
         scene_(new scene<Point>(cloud)) {
-        octree_ = octree_t::from_pointcloud(cloud_, 10, min_voxel_size{octree_diameter_factor * model_diameter});
+        // generate subset of points for valid tangents only
+        for (uint32_t i = 0; i < cloud_->size(); ++i) {
+            if (fabs(1.f - cloud_->points[i].getNormalVector3fMap().norm()) < 0.01f) {
+                tangent_indices_.push_back(i);
+            }
+        }
+        std::cout << "tangent indices: " << tangent_indices_.size() << "\n";
+        octree_ = octree_t::from_pointcloud(cloud_, 10, min_voxel_size{octree_diameter_factor * model_diameter}, tangent_indices_);
 
         valid_subset_.resize(cloud_->size());
         std::iota(valid_subset_.begin(), valid_subset_.end(), 0);
@@ -31,13 +41,21 @@ struct stratified_search<Point>::impl {
         // create score functor
         gstate_ = std::make_shared<vs::gpu_state>();
         score_ = std::make_unique<vs::score_functor<Point, Point>>(gstate_);
-        score_->set_model(model_->cloud(), 100, 0.01f);
-        score_->set_scene(scene_->cloud());
+        score_->set_model(model_->cloud());
+        score_->set_scene(scene_->cloud(), tangent_indices_);
+    }
+
+    void
+    reset() {
+        if (!score_) {
+            throw std::runtime_error("stratified_search::reset(): Model not set");
+        }
+        score_->reset(tangent_indices_);
     }
 
     template <typename PointModel>
     std::pair<std::vector<mat4f_t>, std::vector<subset_t>>
-    find_all(model<PointModel>& m, float model_match_factor, float score_correspondence_threshold, float early_out_factor) {
+    find_all(model<PointModel>& m, float model_match_factor, float score_distance_factor, float early_out_factor, uint32_t max_icp_iterations) {
         if (!score_) {
             throw std::runtime_error("stratified_search::find(): Model not set");
         }
@@ -77,14 +95,21 @@ struct stratified_search<Point>::impl {
                 }
 
                 uint32_t subtree_count = subset.size();
-                std::cout << "Search in " << subtree_count << " points...   ";
+                std::cout << "Search in " << subtree_count << " points...   \n";
                 if (!subtree_count) return;
 
                 //if (leaf_idx) return;
                 uint32_t before = transforms.size();
                 while(true) {
-                    uint32_t min_points = model_match_factor * model_->cloud()->size();
-                    if (subset.size() < min_points) {
+                    uint32_t n_model = detail::correspondence_on_all ? m.cloud()->size() : m.point_count();
+                    uint32_t n_scene = detail::correspondence_on_all ? cloud_->size() : subset.size();
+                    uint32_t min_points = model_match_factor * n_model;
+
+                    //pdebug("        n_model: {}, n_scene: {}, min_points: {}", n_model, n_scene, min_points);
+                    if (n_scene < min_points) {
+                        min_points = model_match_factor * n_scene;
+                    }
+                    if (!min_points) {
                         break;
                     }
 
@@ -96,11 +121,11 @@ struct stratified_search<Point>::impl {
                         m,
                         [&](const mat4f_t& hyp) {
                             return score_->correspondence_count(
-                                hyp, score_correspondence_threshold);
+                                hyp, score_distance_factor, !detail::correspondence_on_all);
                         },
                         [&](uint32_t ccount) {
                             return static_cast<float>(ccount) >=
-                                   early_out_factor * model_->cloud()->size();
+                                   early_out_factor * n_model;
                         },
                         sample_params_, subset,
                         detail::gather_stats ? &stats : nullptr);
@@ -110,12 +135,17 @@ struct stratified_search<Point>::impl {
                         stats.rejection_rate += delta / (++stat_count);
                     }
 
+                    //pdebug("score after sampling: {}", max_score);
                     if (max_score < min_points) {
+                        pdebug("stop (non-sufficient score)");
                         break;
                     }
 
+                    pdebug("final accept at {} of {} necessary points", max_score, min_points);
+
+
                     std::vector<int> matches;
-                    std::tie(t, matches) = score_->icp(t, score_correspondence_threshold, 0);
+                    std::tie(t, matches) = score_->icp(t, score_distance_factor, max_icp_iterations, !detail::icp_on_all, true);
 
                     // transform is good enough
                     subset_t new_subset;
@@ -151,6 +181,7 @@ struct stratified_search<Point>::impl {
     }
 
     typename cloud_t::ConstPtr cloud_;
+    subset_t tangent_indices_;
     sample_parameters sample_params_;
     typename octree_t::sptr_t octree_;
     typename scene<Point>::uptr_t scene_;
@@ -177,10 +208,16 @@ stratified_search<Point>::set_model(typename model<Point>::sptr_t m) {
 }
 
 template <typename Point>
+inline void
+stratified_search<Point>::reset() {
+    impl_->reset();
+}
+
+template <typename Point>
 template <typename PointModel>
 inline std::pair<std::vector<mat4f_t>, std::vector<subset_t>>
-stratified_search<Point>::find_all(model<PointModel>& m, float model_match_factor, float score_correspondence_threshold, float early_out_factor) {
-    return impl_->find_all(m, model_match_factor, score_correspondence_threshold, early_out_factor);
+stratified_search<Point>::find_all(model<PointModel>& m, float model_match_factor, float score_distance_factor, float early_out_factor, uint32_t max_icp_iterations) {
+    return impl_->find_all(m, model_match_factor, score_distance_factor, early_out_factor, max_icp_iterations);
 }
 
 template <typename Point>
