@@ -20,7 +20,7 @@ public:
 
     typedef pcl::PointCloud<Point> cloud_t;
     typedef std::pair<uint32_t, uint32_t> pair_t;
-    typedef std::unordered_map<discrete_feature, pair_t> hash_map_t;
+    typedef std::unordered_multimap<discrete_feature, pair_t> hash_map_t;
     typedef typename hash_map_t::const_iterator pair_iter_t;
 
 public:

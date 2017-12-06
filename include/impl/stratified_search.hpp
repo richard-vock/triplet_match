@@ -137,11 +137,11 @@ struct stratified_search<Point>::impl {
 
                     //pdebug("score after sampling: {}", max_score);
                     if (max_score < min_points) {
-                        pdebug("stop (non-sufficient score)");
+                        //pdebug("stop (non-sufficient score)");
                         break;
                     }
 
-                    pdebug("final accept at {} of {} necessary points", max_score, min_points);
+                    //pdebug("final accept at {} of {} necessary points", max_score, min_points);
 
 
                     std::vector<int> matches;

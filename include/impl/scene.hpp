@@ -172,7 +172,7 @@ scene<Point>::impl::find(model<PointModel>& m, std::function<uint32_t (const mat
                     best_score = score;
 
                     if (detail::early_out && early_out_func(best_score)) {
-                        pdebug("early out at {} valid points", best_score);
+                        //pdebug("early out at {} valid points", best_score);
                         return {transform, best_score};
                     }
                 }
