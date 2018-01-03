@@ -1,0 +1,55 @@
+#ifndef _TRIPLET_MATCH_DISCRETIZE_
+#define _TRIPLET_MATCH_DISCRETIZE_
+
+#include "common"
+
+namespace triplet_match {
+
+struct discretization_params {
+    float distance_step_count;
+    float angle_step;
+};
+
+uint32_t
+discretize(float value, float min_value, float range_value, uint32_t steps);
+
+uint32_t discretize(float value, float step_size);
+
+}  // namespace triplet_match
+
+//namespace std {
+//
+//template <int Dim>
+//struct hash<::Eigen::Matrix<uint32_t, Dim, 1>> {
+//    std::size_t operator()(const ::Eigen::Matrix<uint32_t, Dim, 1>& feat) const {
+//        //return ::triplet_match::detail::murmur(feat);
+//        return feat[0];
+//    }
+//}; // struct hash
+//
+//} // std
+
+namespace std {
+
+template <int Dim>
+struct hash<::Eigen::Matrix<uint32_t, Dim, 1>> {
+    std::size_t operator()(const ::Eigen::Matrix<uint32_t, Dim, 1>& feat) const;
+};
+
+}
+
+//namespace std {
+//template <int Dim>
+//struct hash<::triplet_match::discrete_feature<Dim>> {
+//    std::size_t
+//    operator()(const ::triplet_match::discrete_feature<Dim>& feat) const;
+//};  // struct hash
+//}  // namespace std
+
+#ifndef TRIPLET_MATCH_PRECOMPILE_HEADERS
+#include "impl/discretize.hpp"
+#endif  // TRIPLET_MATCH_PRECOMPILE_HEADERS
+
+#endif /* _TRIPLET_MATCH_DISCRETIZE_ */
+
+// vim: syntax=cpp

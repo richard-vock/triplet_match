@@ -1,53 +1,48 @@
 #ifndef _TRIPLET_MATCH_SCENE_
 #define _TRIPLET_MATCH_SCENE_
 
-#include <unordered_map>
-
 #include "common"
 #include "model"
-#include "cylinder"
+#include "octree"
 
 namespace triplet_match {
 
-template <typename Point>
+template <typename Proj, typename Point>
 class scene {
 public:
-    typedef std::unique_ptr<scene<Point>> uptr_t;
-    typedef std::shared_ptr<scene<Point>> sptr_t;
-    typedef std::weak_ptr<scene<Point>> wptr_t;
-    typedef std::shared_ptr<const scene<Point>> const_sptr_t;
-    typedef std::weak_ptr<const scene<Point>> const_wptr_t;
+    typedef std::unique_ptr<scene<Proj, Point>> uptr_t;
+    typedef std::shared_ptr<scene<Proj, Point>> sptr_t;
+    typedef std::weak_ptr<scene<Proj, Point>> wptr_t;
+    typedef std::shared_ptr<const scene<Proj, Point>> const_sptr_t;
+    typedef std::weak_ptr<const scene<Proj, Point>> const_wptr_t;
 
-    typedef pcl::PointCloud<Point> cloud_t;
-    typedef gpu::vector<gpu::float4_> gpu_data_t;
+    typedef model<Proj, Point> model_t;
+    typedef Proj traits_t;
+    typedef pointcloud<Point> cloud_t;
+    typedef octree<Point> octree_t;
+
+    typedef std::tuple<mat4f_t, subset_t, subset_t, typename Proj::handle_t> match_t;
 
     struct statistics {
         double rejection_rate;
     };
 
-    typedef cylinder<Point> projector_t;
-
 public:
-    scene(typename cloud_t::ConstPtr cloud, gpu_state::sptr_t state);
+    scene(typename cloud_t::Ptr cloud);
 
     virtual ~scene();
 
-    void init(model<Point>& m, float max_corr_dist);
+    match_t
+    find(model<Proj, Point>& m, uint32_t early_out_threshold,
+         const sample_parameters& sample_params, const subset_t& sample_candidates = subset_t());
 
-    //mat4f_t
-    //find(model<Point>& m, uint32_t early_out_threshold,
-    //     const sample_parameters& sample_params, statistics* stats = nullptr);
+    std::vector<match_t>
+    find_all(model<Proj, Point>& m, float octree_diameter_factor, float model_match_factor, float early_out_factor, const sample_parameters& sample_params, uint32_t max_icp_iterations, bool only_first = false);
 
-    std::tuple<mat4f_t, mat4f_t, uint32_t>
-    find(model<Point>& m, uint32_t accept_threshold, uint32_t early_out_threshold,
-         const sample_parameters& sample_params, uint32_t max_icp_iterations, const subset_t& subset = subset_t(),
-         statistics* stats = nullptr);
+    typename cloud_t::Ptr
+    instantiate(model<Proj, Point>& m, const match_t& match);
 
     typename cloud_t::ConstPtr cloud() const;
-
-    //gpu_data_t& device_data();
-
-    //const gpu_data_t& device_data() const;
 
 protected:
     struct impl;

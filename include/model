@@ -4,87 +4,97 @@
 #include <unordered_map>
 
 #include "common"
+#include "discretize"
+#include "pointcloud"
 #include "range"
-#include "triplet_feature"
-#include "cylinder"
 
 namespace triplet_match {
 
-template <typename Point>
+template <typename Proj, typename Point>
 class model {
 public:
-    typedef std::unique_ptr<model<Point>> uptr_t;
-    typedef std::shared_ptr<model<Point>> sptr_t;
-    typedef std::weak_ptr<model<Point>> wptr_t;
-    typedef std::shared_ptr<const model<Point>> const_sptr_t;
-    typedef std::weak_ptr<const model<Point>> const_wptr_t;
+    typedef std::unique_ptr<model<Proj, Point>> uptr_t;
+    typedef std::shared_ptr<model<Proj, Point>> sptr_t;
+    typedef std::weak_ptr<model<Proj, Point>> wptr_t;
+    typedef std::shared_ptr<const model<Proj, Point>> const_sptr_t;
+    typedef std::weak_ptr<const model<Proj, Point>> const_wptr_t;
 
-    typedef pcl::PointCloud<Point> cloud_t;
+    typedef Proj traits_t;
+    typedef pointcloud<Point> cloud_t;
     typedef std::pair<uint32_t, uint32_t> pair_t;
-    typedef std::unordered_map<discrete_feature, pair_t> hash_map_t;
+    typedef typename Proj::discrete_feature_t discrete_feature_t;
+    typedef std::unordered_multimap<discrete_feature_t, pair_t> hash_map_t;
     typedef typename hash_map_t::const_iterator pair_iter_t;
-    typedef gpu::vector<gpu::float4_> gpu_data_t;
-    typedef std::vector<gpu::float4_> cpu_data_t;
-
-    typedef cylinder<Point> projector_t;
+    // typedef gpu::vector<gpu::float4_> gpu_data_t;
+    // typedef std::vector<gpu::float4_> cpu_data_t;
 
 public:
-    model(typename cloud_t::ConstPtr cloud, projector_t projector, discretization_params params);
+    model(typename cloud_t::ConstPtr cloud, discretization_params params);
 
     virtual ~model();
 
-    std::future<void>
-    init(const sample_parameters& sample_params, gpu_state::sptr_t state);
+    void init(const sample_parameters& sample_params);
 
-    std::future<void>
-    init(const subset_t& subset, const sample_parameters& sample_params, gpu_state::sptr_t state);
+    void init(const subset_t& subset, const sample_parameters& sample_params);
 
     std::pair<pair_iter_t, pair_iter_t>
-    query(const Point& p1, const Point& p2, vec2f_t dist, bool debug = false);
+    query(const typename traits_t::feature_t& f, bool debug = false);
 
-    typename cloud_t::Ptr
-    instantiate(const mat4f_t& rigid, const mat4f_t& uvw_transform = mat4f_t::Identity()) const;
+    // typename cloud_t::Ptr
+    // instantiate(const mat4f_t& rigid, const mat4f_t& uvw_transform =
+    // mat4f_t::Identity()) const;
 
-    const projector_t& projector() const;
+    typename Proj::handle_t projector();
 
-    const mat4f_t& normalization() const;
+    typename Proj::const_handle_t projector() const;
+
+    typename cloud_t::Ptr uvw_cloud();
+
+    typename cloud_t::ConstPtr uvw_cloud() const;
+
+    // const mat4f_t& uvw_to_voxel() const;
+
+    std::optional<uint32_t>
+    voxel_query(const vec3f_t& local, bool debug = false) const;
+
+    std::optional<float> voxel_distance(const vec3f_t& local) const;
 
     float diameter() const;
 
-    float resolution() const;
-
-    vec3f_t centroid() const;
-
     uint32_t point_count() const;
 
-    const vec2i_t& extents() const;
+    const vec3i_t& extents() const;
 
-    const vec2i_t& margin() const;
+    int margin() const;
+
+    float uvw_resolution() const;
 
     uint64_t pair_count() const;
 
     typename cloud_t::ConstPtr cloud() const;
 
-    gpu_data_t& device_data();
+    const typename Proj::feature_bounds_t& feature_bounds() const;
 
-    const gpu_data_t& device_data() const;
+    // gpu_data_t& device_data();
 
-    const cpu_data_t& host_data() const;
+    // const gpu_data_t& device_data() const;
 
-    //void
-    //write_octave_density_maps(const std::string& folder, const std::string& data_file_prefix, const std::string& script_file) const;
+    // const cpu_data_t& host_data() const;
+
+    // void
+    // write_octave_density_maps(const std::string& folder, const std::string&
+    // data_file_prefix, const std::string& script_file) const;
 
 protected:
     struct impl;
     std::unique_ptr<impl> impl_;
-
 };
 
 }  // namespace triplet_match
 
 #ifndef TRIPLET_MATCH_PRECOMPILE_HEADERS
 #include "impl/model.hpp"
-#endif // TRIPLET_MATCH_PRECOMPILE_HEADERS
+#endif  // TRIPLET_MATCH_PRECOMPILE_HEADERS
 
 #endif /* _TRIPLET_MATCH_MODEL_ */
 

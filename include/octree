@@ -2,6 +2,7 @@
 #define _TRIPLET_MATCH_OCTREE_
 
 #include "common"
+#include "pointcloud"
 #include <variant>
 
 #include <range/v3/all.hpp>
@@ -56,7 +57,7 @@ public:
     typedef std::weak_ptr<const octree> const_wptr_t;
 
     typedef Point point_t;
-    typedef pcl::PointCloud<Point> cloud_t;
+    typedef pointcloud<Point> cloud_t;
 
     class depth_traverse;
     class breadth_traverse;

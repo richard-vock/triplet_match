@@ -8,17 +8,18 @@
 #include <future>
 #include <functional>
 #include <iostream>
+#include <mutex>
 
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
-#include <pcl/search/kdtree.h>
 
 #include <boost/compute.hpp>
 
 #include <fmt/format.h>
 #include <fmt/ostream.h>
+
 #include <range/v3/all.hpp>
 namespace vw  = ranges::view;
 namespace act = ranges::action;
@@ -39,6 +40,8 @@ typedef Eigen::Vector3i vec3i_t;
 typedef Eigen::RowVector3i rvec3i_t;
 typedef Eigen::Vector4f vec4f_t;
 typedef Eigen::RowVector4f rvec4f_t;
+typedef Eigen::Vector4i vec4i_t;
+typedef Eigen::RowVector4i rvec4i_t;
 typedef Eigen::Matrix3f mat3f_t;
 typedef Eigen::Matrix4f mat4f_t;
 typedef Eigen::MatrixXf matf_t;
@@ -53,6 +56,16 @@ typedef Eigen::AlignedBox<float, 3> bbox3_t;
 typedef Eigen::Quaternionf quatf_t;
 
 typedef std::vector<uint32_t> subset_t;
+
+inline pcl::Vector3fMapConst
+tangent(const pcl::PointSurfel& pnt) {
+    return pcl::Vector3fMapConst (&(pnt.data_c[1]));
+}
+
+inline pcl::Vector3fMap
+tangent(pcl::PointSurfel& pnt) {
+    return pcl::Vector3fMap (&(pnt.data_c[1]));
+}
 
 struct gpu_state {
     typedef std::shared_ptr<gpu_state> sptr_t;
@@ -95,6 +108,36 @@ inline void println(const char *format, const Args & ... args) {
     putchar('\n');
 }
 
+template <typename Rng, typename Init>
+auto average(Rng&& rng, Init&& init = Init(0)) {
+    uint32_t i = 0;
+    auto avg = ranges::accumulate(
+        std::forward<Rng>(rng),
+        std::forward<Init>(init),
+        [&](auto accum, const auto& val) {
+            return accum + (val - accum) / (++i);
+        }
+    );
+    return avg;
+}
+
+template <int Idx, typename Rng>
+auto ith(Rng&& rng) {
+    return vw::transform(std::forward<Rng>(rng), [] (const auto& value) {
+        return std::get<Idx>(value);
+    });
+}
+
+template <typename Index, typename Rngs>
+auto ith(Index idx, Rngs&& rngs) {
+    return vw::transform(std::forward<Rngs>(rngs), [idx] (const auto& rng) {
+        return rng[idx];
+    });
+}
+
+
 } // triplet_match
 
 #endif /* _TRIPLET_MATCH_COMMON_ */
+
+// vim: syntax=cpp:

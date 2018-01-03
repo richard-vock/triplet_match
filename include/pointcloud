@@ -1,0 +1,295 @@
+#ifndef _TRIPLET_MATCH_POINTCLOUD_
+#define _TRIPLET_MATCH_POINTCLOUD_
+
+#include "common"
+#include <pcl/search/kdtree.h>
+#include <pcl/io/pcd_io.h>
+#include <boost/enable_shared_from_this.hpp>
+
+namespace triplet_match {
+
+template <typename Point>
+class pointcloud : public pcl::PointCloud<Point>, public boost::enable_shared_from_this<pointcloud<Point>> {
+protected:
+    typedef pcl::PointCloud<Point> base_t;
+    typedef pcl::search::KdTree<Point> tree_t;
+
+public:
+    typedef boost::shared_ptr<pointcloud<Point>> Ptr;
+    typedef boost::shared_ptr<const pointcloud<Point>> ConstPtr;
+    //using typename base_t::Ptr;
+    //using typename base_t::ConstPtr;
+
+public:
+    virtual ~pointcloud();
+
+    static Ptr empty();
+
+    static Ptr from_pcd(const std::string& filename);
+
+    float resolution() const;
+
+    float diameter() const;
+
+    void set_indices(subset_t subset);
+
+    void reset_tree();
+
+    typename tree_t::Ptr kdtree();
+
+    typename tree_t::ConstPtr kdtree() const;
+
+    std::pair<std::vector<int>, std::vector<float>>
+    knn_inclusive(uint32_t k, const Point& point) const;
+
+    std::pair<std::vector<int>, std::vector<float>>
+    knn_inclusive(uint32_t k, uint32_t idx) const;
+
+    std::pair<std::vector<int>, std::vector<float>>
+    knn_exclusive(uint32_t k, const Point& point) const;
+
+    std::pair<std::vector<int>, std::vector<float>>
+    knn_exclusive(uint32_t k, uint32_t idx) const;
+
+    std::pair<std::vector<int>, std::vector<float>>
+    radius_search_inclusive(float r, const Point& point) const;
+
+    std::pair<std::vector<int>, std::vector<float>>
+    radius_search_inclusive(float r, uint32_t idx) const;
+
+    std::pair<std::vector<int>, std::vector<float>>
+    radius_search_exclusive(float r, const Point& point) const;
+
+    std::pair<std::vector<int>, std::vector<float>>
+    radius_search_exclusive(float r, uint32_t idx) const;
+
+    typename base_t::Ptr
+    native();
+
+    typename base_t::ConstPtr
+    native() const;
+
+protected:
+    pointcloud();
+    void build_tree_() const;
+
+protected:
+    mutable float resolution_;
+    mutable float diameter_;
+    mutable typename tree_t::Ptr tree_;
+    mutable std::mutex mutex_;
+    mutable subset_t subset_;
+};
+
+template <class Point>
+class knn_range : public ranges::view_facade<pointcloud<Point>> {
+    friend ranges::range_access;
+    std::vector<std::pair<int,float>> ns_;
+    uint32_t crt_ = 0;
+    const std::pair<int, float>& read();
+    bool equal(ranges::default_sentinel) const;
+    void next();
+public:
+    knn_range() = default;
+    explicit knn_range(const pointcloud<Point>& cloud, uint32_t k, const Point& pnt);
+    explicit knn_range(typename pointcloud<Point>::ConstPtr cloud, uint32_t k, const Point& pnt);
+};
+
+template <class Point>
+class knn_index_range : public ranges::view_facade<pointcloud<Point>> {
+    friend ranges::range_access;
+    std::vector<int> ns_;
+    uint32_t crt_ = 0;
+    int read();
+    bool equal(ranges::default_sentinel) const;
+    void next();
+public:
+    knn_index_range() = default;
+    explicit knn_index_range(const pointcloud<Point>& cloud, uint32_t k, const Point& pnt);
+    explicit knn_index_range(typename pointcloud<Point>::ConstPtr cloud, uint32_t k, const Point& pnt);
+};
+
+template <class Point>
+class knn_dist_range : public ranges::view_facade<pointcloud<Point>> {
+    friend ranges::range_access;
+    std::vector<float> ns_;
+    uint32_t crt_ = 0;
+    float read();
+    bool equal(ranges::default_sentinel) const;
+    void next();
+public:
+    knn_dist_range() = default;
+    explicit knn_dist_range(const pointcloud<Point>& cloud, uint32_t k, const Point& pnt);
+    explicit knn_dist_range(typename pointcloud<Point>::ConstPtr cloud, uint32_t k, const Point& pnt);
+};
+
+template <class Point>
+class knn_sqr_dist_range : public ranges::view_facade<pointcloud<Point>> {
+    friend ranges::range_access;
+    std::vector<float> ns_;
+    uint32_t crt_ = 0;
+    float read();
+    bool equal(ranges::default_sentinel) const;
+    void next();
+public:
+    knn_sqr_dist_range() = default;
+    explicit knn_sqr_dist_range(const pointcloud<Point>& cloud, uint32_t k, const Point& pnt);
+    explicit knn_sqr_dist_range(typename pointcloud<Point>::ConstPtr cloud, uint32_t k, const Point& pnt);
+};
+
+template<typename Rng, typename Point>
+class knn_view : public ranges::view_adaptor<knn_view<Rng, Point>, Rng> {
+    friend ranges::range_access;
+
+    uint32_t k_;
+    typename pointcloud<Point>::ConstPtr cloud_;
+
+    class adaptor : public ranges::adaptor_base {
+        uint32_t k_;
+        typename pointcloud<Point>::ConstPtr cloud_;
+    public:
+        adaptor() = default;
+        adaptor(uint32_t k, typename pointcloud<Point>::ConstPtr cloud) : k_(k), cloud_(cloud) {}
+        auto read(ranges::iterator_t<Rng> it) const {
+            return knn_range(cloud_, k_, *it);
+        }
+    };
+    adaptor begin_adaptor() const { return {k_, cloud_}; }
+    adaptor end_adaptor() const { return {k_, cloud_}; }
+public:
+    knn_view() = default;
+    knn_view(Rng && rng, uint32_t k, typename pointcloud<Point>::ConstPtr cloud)
+      : knn_view::view_adaptor{std::forward<Rng>(rng)}
+      , k_(k)
+      , cloud_(cloud)
+    {}
+};
+
+template<typename Rng, typename Point>
+class knn_index_view : public ranges::view_adaptor<knn_index_view<Rng, Point>, Rng> {
+    friend ranges::range_access;
+
+    uint32_t k_;
+    typename pointcloud<Point>::ConstPtr cloud_;
+
+    class adaptor : public ranges::adaptor_base {
+        uint32_t k_;
+        typename pointcloud<Point>::ConstPtr cloud_;
+    public:
+        adaptor() = default;
+        adaptor(uint32_t k, typename pointcloud<Point>::ConstPtr cloud) : k_(k), cloud_(cloud) {}
+        auto read(ranges::iterator_t<Rng> it) const {
+            return knn_index_range(cloud_, k_, *it);
+        }
+    };
+    adaptor begin_adaptor() const { return {k_, cloud_}; }
+    adaptor end_adaptor() const { return {k_, cloud_}; }
+public:
+    knn_index_view() = default;
+    knn_index_view(Rng && rng, uint32_t k, typename pointcloud<Point>::ConstPtr cloud)
+      : knn_index_view::view_adaptor{std::forward<Rng>(rng)}
+      , k_(k)
+      , cloud_(cloud)
+    {}
+};
+
+template<typename Rng, typename Point>
+class knn_dist_view : public ranges::view_adaptor<knn_dist_view<Rng, Point>, Rng> {
+    friend ranges::range_access;
+
+    uint32_t k_;
+    typename pointcloud<Point>::ConstPtr cloud_;
+
+    class adaptor : public ranges::adaptor_base {
+        uint32_t k_;
+        typename pointcloud<Point>::ConstPtr cloud_;
+    public:
+        adaptor() = default;
+        adaptor(uint32_t k, typename pointcloud<Point>::ConstPtr cloud) : k_(k), cloud_(cloud) {}
+        auto read(ranges::iterator_t<Rng> it) const {
+            return knn_dist_range(cloud_, k_, *it);
+        }
+    };
+    adaptor begin_adaptor() const { return {k_, cloud_}; }
+    adaptor end_adaptor() const { return {k_, cloud_}; }
+public:
+    knn_dist_view() = default;
+    knn_dist_view(Rng && rng, uint32_t k, typename pointcloud<Point>::ConstPtr cloud)
+      : knn_dist_view::view_adaptor{std::forward<Rng>(rng)}
+      , k_(k)
+      , cloud_(cloud)
+    {}
+};
+
+template<typename Rng, typename Point>
+class knn_sqr_dist_view : public ranges::view_adaptor<knn_sqr_dist_view<Rng, Point>, Rng> {
+    friend ranges::range_access;
+
+    uint32_t k_;
+    typename pointcloud<Point>::ConstPtr cloud_;
+
+    class adaptor : public ranges::adaptor_base {
+        uint32_t k_;
+        typename pointcloud<Point>::ConstPtr cloud_;
+    public:
+        adaptor() = default;
+        adaptor(uint32_t k, typename pointcloud<Point>::ConstPtr cloud) : k_(k), cloud_(cloud) {}
+        auto read(ranges::iterator_t<Rng> it) const {
+            return knn_sqr_range(cloud_, k_, *it);
+        }
+    };
+    adaptor begin_adaptor() const { return {k_, cloud_}; }
+    adaptor end_adaptor() const { return {k_, cloud_}; }
+public:
+    knn_sqr_dist_view() = default;
+    knn_sqr_dist_view(Rng && rng, uint32_t k, typename pointcloud<Point>::ConstPtr cloud)
+      : knn_sqr_dist_view::view_adaptor{std::forward<Rng>(rng)}
+      , k_(k)
+      , cloud_(cloud)
+    {}
+};
+
+template<class Point, class Rng>
+knn_view<Rng, Point> knn(Rng && rng, uint32_t k, typename pointcloud<Point>::ConstPtr cloud) {
+    return {std::forward<Rng>(rng), k, cloud};
+}
+
+template<class Point, class Rng>
+knn_index_view<Rng, Point> knn_indices(Rng && rng, uint32_t k, typename pointcloud<Point>::ConstPtr cloud) {
+    return {std::forward<Rng>(rng), k, cloud};
+}
+
+template<class Point, class Rng>
+knn_dist_view<Rng, Point> knn_dists(Rng && rng, uint32_t k, typename pointcloud<Point>::ConstPtr cloud) {
+    return {std::forward<Rng>(rng), k, cloud};
+}
+
+template<class Point, class Rng>
+knn_sqr_dist_view<Rng, Point> knn_sqr_dists(Rng && rng, uint32_t k, typename pointcloud<Point>::ConstPtr cloud) {
+    return {std::forward<Rng>(rng), k, cloud};
+}
+
+
+//template<class Rng, class Point>
+//auto knn_indices(Rng && rng, uint32_t k, typename pointcloud<Point>::ConstPtr cloud) {
+//    return knn_view(std::forward<Rng>(rng), k, cloud) | vw::keys;
+//}
+//
+//template<class Rng, class Point>
+//auto knn_sqr_dists(Rng && rng, uint32_t k, typename pointcloud<Point>::ConstPtr cloud) {
+//    return knn_view(std::forward<Rng>(rng), k, cloud) | vw::values;
+//}
+//
+//template<class Point, class Rng>
+//auto knn_dists(Rng && rng, uint32_t k, typename pointcloud<Point>::ConstPtr cloud) {
+//    return knn_view<Rng, Point>(std::forward<Rng>(rng), k, cloud) | vw::values | vw::transform([](float v) { return sqrtf(v); });
+//}
+
+}  // namespace triplet_match
+
+#ifndef TRIPLET_MATCH_PRECOMPILE_HEADERS
+#include "impl/pointcloud.hpp"
+#endif  // TRIPLET_MATCH_PRECOMPILE_HEADERS
+
+#endif /* _TRIPLET_MATCH_POINTCLOUD_ */
+// vim: syntax=cpp:

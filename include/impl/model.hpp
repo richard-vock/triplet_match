@@ -1,38 +1,19 @@
 #include <fstream>
 #include <range/v3/all.hpp>
 
-#include "debug.hpp"
+//#include "debug.hpp"
 
 namespace triplet_match {
 
-namespace detail {
-
-template <typename SearchT>
-float
-estimate_resolution(const SearchT& search) {
-    std::vector<float> dists(2);
-    std::vector<int> nns(2);
-    double res = 0.0;
-    uint32_t idx = 0;
-    for (const auto& pnt : *search.getInputCloud()) {
-        search.nearestKSearch(pnt, 2, nns, dists);
-        res += (static_cast<double>(dists[1]) - res) / (++idx);
-    }
-
-    return static_cast<float>(res);
-}
-
-} // detail
-
-template <typename Point>
-struct model<Point>::impl {
-    impl(typename cloud_t::ConstPtr cloud, projector_t projector, discretization_params params) : cloud_(cloud), projector_(std::move(projector)), params_(params), init_(false) {
+template <typename Proj, typename Point>
+struct model<Proj,Point>::impl {
+    impl(typename cloud_t::ConstPtr cloud, discretization_params params) : cloud_(cloud), params_(params), init_(false) {
     }
 
     ~impl() {}
 
-    std::future<void>
-    init(const subset_t& subset, const sample_parameters& params, gpu_state::sptr_t state) {
+    void
+    init(const subset_t& subset, const sample_parameters& params) {
         if (subset.empty()) {
             subset_.resize(cloud_->size());
             std::iota(subset_.begin(), subset_.end(), 0u);
@@ -40,61 +21,182 @@ struct model<Point>::impl {
             subset_ = subset;
         }
 
+        subset_ = vw::filter(subset_, [&] (uint32_t idx) {
+            vec3f_t pos = cloud_->points[idx].getVector3fMap();
+            vec3f_t nrm = cloud_->points[idx].getNormalVector3fMap();
+            vec3f_t tgt = vec3f_t(cloud_->points[idx].data_c[1], cloud_->points[idx].data_c[2], cloud_->points[idx].data_c[3]);
+            bool finite = pos.allFinite() && nrm.allFinite() && tgt.allFinite();
+            return finite;
+        }) | ranges::to_vector;
+
+        proj_ = Proj::init_from_model(cloud_, subset);
+
         s_params_ = params;
 
-        state_ = state;
+        bbox3_t bbox;
+        for (uint32_t i : subset_) {
+            const Point& p = cloud_->points[i];
+            bbox.extend(p.getVector3fMap());
+        }
+        diameter_ = (bbox.max() - bbox.min()).norm();
 
-        return std::async(std::launch::async, [&] () {
-            this->build_model_();
-        });
+        uvw_cloud_ = cloud_t::empty();
+        for (auto idx : subset_) {
+            Point uvw_pnt;
+            uvw_pnt.getVector3fMap() = traits_t::project(proj_, cloud_->points[idx].getVector3fMap());
+            uvw_cloud_->push_back(uvw_pnt);
+            uvw_bounds_.extend(uvw_cloud_->points[idx].getVector3fMap());
+        }
+        uvw_res_ = uvw_cloud_->resolution();
+        vec3f_t lower = uvw_bounds_.min();
+        vec3f_t upper = uvw_bounds_.max();
+        vec3f_t range = upper-lower;
+
+        vec3f_t ext = (uvw_bounds_.diagonal() / uvw_res_)
+            .cwiseMax(vec3f_t::Constant(1.f));
+
+        margin_ = 5;
+
+        extents_ = (ext + vec3f_t::Constant(2.f*margin_)).template cast<int>();
+
+        vec3f_t scale(
+            range[0] < Eigen::NumTraits<float>::dummy_precision() ? 1.f : ext[0] / range[0],
+            range[1] < Eigen::NumTraits<float>::dummy_precision() ? 1.f : ext[1] / range[1],
+            range[2] < Eigen::NumTraits<float>::dummy_precision() ? 1.f : ext[2] / range[2]);
+        uvw_to_voxel_ = mat4f_t::Identity();
+        uvw_to_voxel_.block<3, 3>(0, 0) = scale.asDiagonal();
+        uvw_to_voxel_.block<3, 1>(0, 3) = uvw_to_voxel_.template block<3, 3>(0, 0) * (-uvw_bounds_.min())
+                                + vec3f_t::Constant(static_cast<float>(margin_));
+        // subvoxel-shift
+        uvw_to_voxel_.template block<3, 1>(0, 3) -= vec3f_t::Constant(0.5f);
+
+        mat4f_t inv = uvw_to_voxel_.inverse();
+
+        uint32_t voxel_count = extents_[0] * extents_[1] * extents_[2];
+        voxel_data_.resize(voxel_count);
+
+        auto voxels = vw::cartesian_product(
+            vw::ints(0, extents_[0]),
+            vw::ints(0, extents_[1]),
+            vw::ints(0, extents_[2])
+        );
+
+        for (auto && [i,j,k] : voxels) {
+            int lin = k * extents_[0] * extents_[1] + j * extents_[0] + i;
+            Point uvw;
+            uvw.getVector3fMap() = (inv * vec4f_t(i, j, k, 1.f)).head(3);
+            auto is = uvw_cloud_->knn_inclusive(1, uvw).first;
+            voxel_data_[lin] = is[0];
+        }
+
+        subset_ = vw::filter(subset_, [&] (uint32_t idx) {
+            vec3f_t tgt = vec3f_t(cloud_->points[idx].data_c[1], cloud_->points[idx].data_c[2], cloud_->points[idx].data_c[3]);
+            return tgt.norm() > 0.7f;
+        }) | ranges::to_vector;
+        for (auto && [i, j] : vw::cartesian_product(subset_, subset_)) {
+            if (i==j) continue;
+
+            auto f = traits_t::feature(proj_, cloud_->points[i], cloud_->points[j]);
+            feat_bounds_.extend(f);
+        }
+
+        std::map<int, uint32_t> hist_0, hist_1;
+        for (auto && [i, j] : vw::cartesian_product(subset_, subset_)) {
+            if (i==j) continue;
+
+            //bool debug = i == 54 && j == 313;
+            auto f = traits_t::feature(proj_, cloud_->points[i], cloud_->points[j]);
+            auto df = traits_t::discretize_feature(proj_, f, feat_bounds_, params_);
+
+            if (traits_t::valid(proj_, f, feat_bounds_, M_PI / 10.f, 2.0*M_PI, 0.4f, 1.f)) {
+                //vec3f_t ti(cloud_->points[i].data_c[1], cloud_->points[i].data_c[2], cloud_->points[i].data_c[3]);
+                //vec3f_t tj(cloud_->points[j].data_c[1], cloud_->points[j].data_c[2], cloud_->points[j].data_c[3]);
+                //pdebug("model ti: {}, ||t_i|| = {}", ti.transpose(), ti.norm());
+                //pdebug("model tj: {}, ||t_j|| = {}", tj.transpose(), tj.norm());
+                //pdebug("model feat 1: {}", f[1]);
+                //if (debug) {
+                    //pdebug("model feat: {}", f.transpose());
+                    //pdebug("model dfeat: {}", df.transpose());
+                //}
+                map_.insert({df, pair_t{i,j}});
+                used_points_.insert(i);
+                used_points_.insert(j);
+            }
+        }
+
+        init_ = true;
     }
 
     std::pair<pair_iter_t, pair_iter_t>
-    query(const Point& p1, const Point& p2, vec2f_t dist, bool debug) {
+    query(const typename traits_t::feature_t& f, bool debug) {
         if (!init_) {
             throw std::runtime_error("Cannot query uninitialized model");
         }
 
-        //float lower = s_params_.min_diameter_factor;
-
-        dist[0] = (dist[0] - min_u_) / (max_u_ - min_u_);
-        dist[1] = (dist[1] - min_v_) / (max_v_ - min_v_);
-
-        discrete_feature df = compute_discrete<Point>(p1, p2, dist, params_, 0.1f, 0.9f, debug);
+        auto df = traits_t::discretize_feature(proj_, f, feat_bounds_, params_);
+        if (debug) {
+            pdebug("scene dfeat: {}", df.transpose());
+        }
 
         return map_.equal_range(df);
     }
 
-    const projector_t& projector() const {
-        return projector_;
+    typename Proj::handle_t projector() {
+        return proj_;
     }
 
-    const mat4f_t& normalization() const {
-        return normalize_;
+    typename Proj::const_handle_t projector() const {
+        return proj_;
+    }
+
+    typename cloud_t::Ptr uvw_cloud() {
+        return uvw_cloud_;
+    }
+
+    typename cloud_t::ConstPtr uvw_cloud() const {
+        return uvw_cloud_;
+    }
+
+    std::optional<uint32_t>
+    voxel_query(const vec3f_t& uvw, bool debug = false) const {
+        vec4i_t ijk = (uvw_to_voxel_ * uvw.homogeneous()).template cast<int>();
+        int i = ijk[0];
+        int j = ijk[1];
+        int k = ijk[2];
+        if (i < 0 || j < 0 || k < 0 || i >= extents_[0] || j >= extents_[1] ||
+            k >= extents_[2]) {
+            return std::nullopt;
+        }
+        int lin = k * extents_[0] * extents_[1] + j * extents_[0] + i;
+        return voxel_data_[lin];
+    }
+
+    std::optional<float>
+    voxel_distance(const vec3f_t& local) const {
+        vec3f_t uvw = Proj::project(proj_, local);
+        std::optional<uint32_t> uvw_n = voxel_query(uvw);
+        if (!uvw_n) return std::nullopt;
+        return Proj::intrinsic_distance(proj_, uvw, uvw_cloud_->points[uvw_n.value()].getVector3fMap());
     }
 
     float diameter() const {
         return diameter_;
     }
 
-    float resolution() const {
-        return resolution_;
-    }
-
-    const vec2i_t& extents() const {
+    const vec3i_t& extents() const {
         return extents_;
     }
 
-    const vec2i_t& margin() const {
+    int margin() const {
         return margin_;
     }
 
-    vec3f_t centroid() const {
-        return centroid_;
+    float uvw_resolution() const {
+        return uvw_res_;
     }
 
     uint32_t point_count() const {
-        return point_count_;
+        return subset_.size();
     }
 
     uint64_t pair_count() const {
@@ -105,355 +207,213 @@ struct model<Point>::impl {
         return cloud_;
     }
 
-    gpu_data_t& device_data() {
-        return gpu_data_;
+    const typename Proj::feature_bounds_t&
+    feature_bounds() const {
+        return feat_bounds_;
     }
 
-    const gpu_data_t& device_data() const {
-        return gpu_data_;
-    }
+    //vec3i_t from_linear(const vec3i_t& ijk) {
+        //return ijk[2] * extents_[0] * extents_[1] + ijk[1] * extents_[0] + ijk[0];
+    //}
 
-    const cpu_data_t& host_data() const {
-        return cpu_data_;
-    }
+    //typename cloud_t::Ptr
+    //instantiate(const mat4f_t& rigid, const mat4f_t& uvw_transform) const {
+        //mat4f_t inv_norm = normalize_.inverse();
 
-    void
-    build_model_() {
-        pcl::search::KdTree<Point> kdtree;
-        kdtree.setInputCloud(cloud_);
+        //typename cloud_t::Ptr result(new cloud_t());
+        //result->resize(cloud_->size());
+        //for (uint32_t idx = 0; idx < cloud_->size(); ++idx) {
+            //vec4f_t p = cloud_->points[idx].getVector3fMap().homogeneous();
 
-        bbox3_t bbox;
-        std::set<uint32_t> valid;
-        centroid_ = vec3f_t::Zero();
-        for (uint32_t i : subset_) {
-            const Point& p = cloud_->points[i];
-            if (pcl::isFinite(p)) {
-                valid.insert(i);
-                bbox.extend(p.getVector3fMap());
-                centroid_ += (cloud_->points[i].getVector3fMap() - centroid_) / valid.size();
-            }
-        }
-        point_count_ = valid.size();
-        diameter_ = (bbox.max() - bbox.min()).norm();
-        resolution_ = detail::estimate_resolution(kdtree);
-        margin_ = vec2i_t(50, 50);
-        vec2i_t ext = vec2i_t(2000, 500);
-        extents_ = ext + 2 * margin_;
-        cpu_data_.resize(extents_[0] * extents_[1]);
+            //// project into normalized uvw space
+            //p.head(3) = projector_.project(p.head(3));
+            //p = normalize_ * p;
 
-        bbox2_t bbox_uv;
-        for (const auto& pnt : *cloud_) {
-            bbox_uv.extend(projector_.project(pnt.getVector3fMap()).head(2));
-        }
+            //// distort
+            //p = uvw_transform * p;
 
-        float lower = bbox_uv.min()[1];
-        float upper = bbox_uv.max()[1];
-        float range = upper - lower;
-        // add margin to v
-        //float margin = margin_factor * range;
-        //range = upper-lower + 2.f * margin;
-        // add as correction to projection matrix
-        normalize_ = mat4f_t::Identity();
-        float scale = 1.f / range;
-        //std::cout << "normalize" << "\n";
-        //std::cout << lower << "\n";
-        //std::cout << upper << "\n";
-        //std::cout << range << "\n";
-        normalize_(1,3) = -lower;
-        normalize_.row(1) *= scale;
-        //unnormalize_ = normalize_.inverse();
+            //vec3f_t unnorm = (inv_norm * p).head(3);
 
-        //std::vector<vec3f_t> debug;
-        //std::map<int, std::vector<std::pair<float, vec3f_t>>> debug_data;
-        Eigen::MatrixXf img = -Eigen::MatrixXf::Ones(extents_[1], extents_[0]);
-        for (int j = 0; j < extents_[1]; ++j) {
-            float v_n = static_cast<float>(j - margin_[1]) / (ext[1] - 1);
+            //// unproject
+            //p.head(3) = projector_.unproject(unnorm);
 
-            float v = lower + range * v_n;
+            //// rigid transform into scene
+            //p = rigid * p;
 
-            int x = j * extents_[0];
-            for (int i = 0; i < extents_[0]; ++i) {
-                float u = static_cast<float>(i - margin_[0]) / (ext[0] - 1);
-                Point query;
-                query.getVector3fMap() = projector_.unproject(vec2f_t(u, v));
-
-                std::vector<int> nns(1);
-                std::vector<float> dists(1);
-                kdtree.nearestKSearch(query, 1, nns, dists);
-                //distance_data_[x + y + k] =
-                    //max_integer_dist * (sqrtf(dists[0]) / max_dist);
-                vec3f_t neigh = cloud_->points[nns[0]].getVector3fMap();
-
-                vec3f_t proj_neigh = projector_.project(neigh);
-                proj_neigh = (normalize_ * proj_neigh.homogeneous()).head(3);
-
-                cpu_data_[x + i][0] = proj_neigh[0];
-                cpu_data_[x + i][1] = proj_neigh[1];
-                cpu_data_[x + i][2] = proj_neigh[2];
-                cpu_data_[x + i][3] = 1.f;
-
-                if (sqrtf(dists[0] < 0.0005f)) {
-                    //if (nns[0] == 100) {
-                        //fmt::print("model point, uv: ({}, {}), idx: {}, dist: {}, px: ({}, {})\n", u, v, x + j, dists[0], i, j);
-                    //}
-                    img(j, i) = sqrtf(dists[0]);
-                    //if (debug_data.find(nns[0]) == debug_data.end()) {
-                        //debug_data[nns[0]] = std::vector<std::pair<float, vec3f_t>>();
-                    //}
-                    //debug_data[nns[0]].push_back(std::make_pair(sqrtf(dists[0]), vec3f_t(u, v, 0.f)));
-                }
-            }
-        }
-
-        //for (uint32_t i = 0; i < cloud_->size(); ++i) {
-            //if (i%30) continue;
-            //auto it = debug_data.find(i);
-            //if (it == debug_data.end()) continue;
-
-            //std::vector<std::pair<float, vec3f_t>> copy(it->second.begin(), it->second.end());
-            //std::sort(copy.begin(), copy.end(), [&] (auto a, auto b) { return a.first < b.first; });
-            //debug.push_back(copy.front().second);
-            //debug.push_back(cloud_->points[i].getVector3fMap());
+            //result->points[idx].getVector3fMap() = p.head(3);
         //}
 
-        to_grayscale_image("/tmp/model.pgm", img);
-
-        //lower = /* diameter_ */ s_params_.min_diameter_factor;
-        //upper = /* diameter_ */ s_params_.max_diameter_factor;
-        //float range = upper-lower;
-        max_u_ = 0.f;
-        max_v_ = 0.f;
-        min_u_ = std::numeric_limits<float>::max();
-        min_v_ = std::numeric_limits<float>::max();
-        for (uint32_t i : valid) {
-            const Point& p1 = cloud_->points[i];
-            for (uint32_t j : valid) {
-                const Point& p2 = cloud_->points[j];
-                vec2f_t d = projector_.intrinsic_difference(p1.getVector3fMap(), p2.getVector3fMap());
-                min_u_ = std::min(d[0], min_u_);
-                min_v_ = std::min(d[1], min_v_);
-                max_u_ = std::max(d[0], max_u_);
-                max_v_ = std::max(d[1], max_v_);
-            }
-        }
-        float range_u = max_u_ - min_u_;
-        float range_v = max_v_ - min_v_;
-        pair_count_ = 0;
-        for (uint32_t i : valid) {
-            const Point& p1 = cloud_->points[i];
-            //vec2f_t uv1 = projector_.project(p1.getVector3fMap()).head(2);
-
-            for (uint32_t j : valid) {
-                if (i == j) {
-                    continue;
-                }
-                const Point& p2 = cloud_->points[j];
-                //vec2f_t uv2 = projector_.project(p2.getVector3fMap()).head(2);
-
-                bool debug = i == 0 && j == 265;
-                if (debug) {
-                    pdebug("model descriptor");
-                    pdebug("    proj: {}", projector_.axis().transpose());
-                }
-                vec2f_t d = projector_.intrinsic_difference(p1.getVector3fMap(), p2.getVector3fMap(), debug);
-                d[0] = (d[0] - min_u_) / range_u;
-                d[1] = (d[1] - min_v_) / range_v;
-
-                if (d[0] < 0.1f || d[0] > 1.f || d[1] < 0.1f || d[1] > 1.f) {
-                    continue;
-                }
-
-                ++pair_count_;
-
-                //used_points_.insert(i);
-                //used_points_.insert(j);
-                discrete_feature df = compute_discrete<Point>(p1, p2, d, params_, 0.1f, 0.9f, debug);
-                map_.insert({df, pair_t{i, j}});
-            }
-        }
-
-
-        gpu_data_ =
-            gpu::vector<gpu::float4_>(cpu_data_.size(), state_->context);
-        gpu::copy(cpu_data_.begin(), cpu_data_.end(), gpu_data_.begin(), state_->queue);
-
-        init_ = true;
-    }
-
-    typename cloud_t::Ptr
-    instantiate(const mat4f_t& rigid, const mat4f_t& uvw_transform) const {
-        mat4f_t inv_norm = normalize_.inverse();
-
-        typename cloud_t::Ptr result(new cloud_t());
-        result->resize(cloud_->size());
-        for (uint32_t idx = 0; idx < cloud_->size(); ++idx) {
-            vec4f_t p = cloud_->points[idx].getVector3fMap().homogeneous();
-
-            // project into normalized uvw space
-            p.head(3) = projector_.project(p.head(3));
-            p = normalize_ * p;
-
-            // distort
-            p = uvw_transform * p;
-
-            vec3f_t unnorm = (inv_norm * p).head(3);
-
-            // unproject
-            p.head(3) = projector_.unproject(unnorm);
-
-            // rigid transform into scene
-            p = rigid * p;
-
-            result->points[idx].getVector3fMap() = p.head(3);
-        }
-
-        return result;
-    }
+        //return result;
+    //}
 
     typename cloud_t::ConstPtr cloud_;
-    projector_t projector_;
+    typename cloud_t::Ptr uvw_cloud_;
+    typename traits_t::handle_t proj_;
     discretization_params params_;
     bool init_;
 
-    float min_u_;
-    float min_v_;
-    float max_u_;
-    float max_v_;
-
-    gpu_state::sptr_t state_;
     subset_t subset_;
     sample_parameters s_params_;
     hash_map_t map_;
     float diameter_;
-    float resolution_;
-    vec3f_t centroid_;
-    uint32_t point_count_;
-    vec2i_t extents_;
-    vec2i_t margin_;
+    vec3i_t extents_;
+    int margin_;
+    bbox3_t uvw_bounds_;
+    typename Proj::feature_bounds_t feat_bounds_;
+    mat4f_t uvw_to_voxel_;
+    float uvw_res_;
     uint64_t pair_count_;
-    cpu_data_t cpu_data_;
-    gpu_data_t gpu_data_;
-    mat4f_t normalize_;
-    //mat4f_t unnormalize_;
+    subset_t voxel_data_;
+    std::set<uint32_t> used_points_;
 };
 
 
-template <typename Point>
+template <typename Proj, typename Point>
 inline
-model<Point>::model(typename cloud_t::ConstPtr cloud, projector_t projector, discretization_params params) {
-    impl_ = std::make_unique<impl>(cloud, std::move(projector), params);
+model<Proj,Point>::model(typename cloud_t::ConstPtr cloud, discretization_params params) {
+    impl_ = std::make_unique<impl>(cloud, params);
 }
 
-template <typename Point>
+template <typename Proj, typename Point>
 inline
-model<Point>::~model() {
+model<Proj,Point>::~model() {
 }
 
-template <typename Point>
-inline std::future<void>
-model<Point>::init(const sample_parameters& sample_params, gpu_state::sptr_t state) {
-    return impl_->init(subset_t(), sample_params, state);
+template <typename Proj, typename Point>
+inline void
+model<Proj,Point>::init(const sample_parameters& sample_params) {
+    impl_->init(subset_t(), sample_params);
 }
 
-template <typename Point>
-inline std::future<void>
-model<Point>::init(const subset_t& subset, const sample_parameters& sample_params, gpu_state::sptr_t state) {
-    return impl_->init(subset, sample_params, state);
+template <typename Proj, typename Point>
+inline void
+model<Proj,Point>::init(const subset_t& subset, const sample_parameters& sample_params) {
+    impl_->init(subset, sample_params);
 }
 
-template <typename Point>
-inline std::pair<typename model<Point>::pair_iter_t, typename model<Point>::pair_iter_t>
-model<Point>::query(const Point& p1, const Point& p2, vec2f_t dist, bool debug) {
-    return range<pair_iter_t>(impl_->query(p1, p2, std::move(dist), debug));
+template <typename Proj, typename Point>
+inline std::pair<typename model<Proj,Point>::pair_iter_t, typename model<Proj,Point>::pair_iter_t>
+model<Proj,Point>::query(const typename traits_t::feature_t& f, bool debug) {
+    return range<pair_iter_t>(impl_->query(f, debug));
 }
 
-template <typename Point>
-inline typename model<Point>::cloud_t::Ptr
-model<Point>::instantiate(const mat4f_t& rigid, const mat4f_t& uvw_transform) const {
-    return impl_->instantiate(rigid, uvw_transform);
-}
+//template <typename Proj, typename Point>
+//inline typename model<Proj,Point>::cloud_t::Ptr
+//model<Proj,Point>::instantiate(const mat4f_t& rigid, const mat4f_t& uvw_transform) const {
+    //return impl_->instantiate(rigid, uvw_transform);
+//}
 
-template <typename Point>
-inline const typename model<Point>::projector_t&
-model<Point>::projector() const {
+template <typename Proj, typename Point>
+inline typename Proj::handle_t
+model<Proj,Point>::projector() {
     return impl_->projector();
 }
 
-template <typename Point>
-inline const mat4f_t&
-model<Point>::normalization() const {
-    return impl_->normalization();
+template <typename Proj, typename Point>
+inline typename Proj::const_handle_t
+model<Proj,Point>::projector() const {
+    return impl_->projector();
 }
 
-template <typename Point>
+template <typename Proj, typename Point>
+inline typename model<Proj,Point>::cloud_t::Ptr
+model<Proj,Point>::uvw_cloud() {
+    return impl_->uvw_cloud();
+}
+
+template <typename Proj, typename Point>
+inline typename model<Proj,Point>::cloud_t::ConstPtr
+model<Proj,Point>::uvw_cloud() const {
+    return impl_->uvw_cloud();
+}
+
+//template <typename Proj, typename Point>
+//inline const mat4f_t&
+//model<Proj,Point>::uvw_to_voxel() const {
+    //return impl_->uvw_to_voxel();
+//}
+
+template <typename Proj, typename Point>
+inline std::optional<uint32_t>
+model<Proj,Point>::voxel_query(const vec3f_t& uvw, bool debug) const {
+    return impl_->voxel_query(uvw, debug);
+}
+
+template <typename Proj, typename Point>
+inline std::optional<float>
+model<Proj,Point>::voxel_distance(const vec3f_t& local) const {
+    return impl_->voxel_distance(local);
+}
+
+template <typename Proj, typename Point>
 inline float
-model<Point>::diameter() const {
+model<Proj,Point>::diameter() const {
     return impl_->diameter();
 }
 
-template <typename Point>
-inline float
-model<Point>::resolution() const {
-    return impl_->resolution();
-}
-
-template <typename Point>
-inline vec3f_t
-model<Point>::centroid() const {
-    return impl_->centroid();
-}
-
-template <typename Point>
+template <typename Proj, typename Point>
 inline uint32_t
-model<Point>::point_count() const {
+model<Proj,Point>::point_count() const {
     return impl_->point_count();
 }
 
-template <typename Point>
-inline const vec2i_t&
-model<Point>::extents() const {
+template <typename Proj, typename Point>
+inline const vec3i_t&
+model<Proj,Point>::extents() const {
     return impl_->extents();
 }
 
-template <typename Point>
-inline const vec2i_t&
-model<Point>::margin() const {
+template <typename Proj, typename Point>
+inline int
+model<Proj,Point>::margin() const {
     return impl_->margin();
 }
 
-template <typename Point>
+template <typename Proj, typename Point>
+inline float
+model<Proj,Point>::uvw_resolution() const {
+    return impl_->uvw_resolution();
+}
+
+template <typename Proj, typename Point>
 inline uint64_t
-model<Point>::pair_count() const {
+model<Proj,Point>::pair_count() const {
     return impl_->pair_count();
 }
 
-template <typename Point>
-inline typename model<Point>::cloud_t::ConstPtr
-model<Point>::cloud() const {
+template <typename Proj, typename Point>
+inline typename model<Proj,Point>::cloud_t::ConstPtr
+model<Proj,Point>::cloud() const {
     return impl_->cloud();
 }
 
-template <typename Point>
-inline typename model<Point>::gpu_data_t&
-model<Point>::device_data() {
-    return impl_->device_data();
+template <typename Proj, typename Point>
+inline const typename Proj::feature_bounds_t&
+model<Proj,Point>::feature_bounds() const {
+    return impl_->feature_bounds();
 }
 
-template <typename Point>
-inline const typename model<Point>::gpu_data_t&
-model<Point>::device_data() const {
-    return impl_->device_data();
-}
+//template <typename Proj, typename Point>
+//inline typename model<Proj,Point>::gpu_data_t&
+//model<Proj,Point>::device_data() {
+    //return impl_->device_data();
+//}
 
-template <typename Point>
-inline const typename model<Point>::cpu_data_t&
-model<Point>::host_data() const {
-    return impl_->host_data();
-}
+//template <typename Proj, typename Point>
+//inline const typename model<Proj,Point>::gpu_data_t&
+//model<Proj,Point>::device_data() const {
+    //return impl_->device_data();
+//}
 
-//template <typename Point>
+//template <typename Proj, typename Point>
+//inline const typename model<Proj,Point>::cpu_data_t&
+//model<Proj,Point>::host_data() const {
+    //return impl_->host_data();
+//}
+
+//template <typename Proj, typename Point>
 //void
-//model<Point>::write_octave_density_maps(const std::string& folder, const std::string& data_file_prefix, const std::string& script_file) const {
+//model<Proj,Point>::write_octave_density_maps(const std::string& folder, const std::string& data_file_prefix, const std::string& script_file) const {
 //    const discretization_params& ps = impl_->params_;
 //    const hash_map_t& map = impl_->map_;
 //

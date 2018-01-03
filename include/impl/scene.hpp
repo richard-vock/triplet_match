@@ -1,10 +1,8 @@
 #include <random>
 #include <chrono>
 #include "timer.hpp"
-#include "gpu_program"
 #include <boost/compute/interop/eigen.hpp>
-
-#include "debug.hpp"
+#include <pcl/registration/icp.h>
 
 namespace triplet_match {
 
@@ -14,228 +12,133 @@ namespace detail {
 constexpr bool early_out = true;
 constexpr bool deterministic = true;
 constexpr double match_probability = 0.99;
-constexpr float max_dist_factor = 1.0;
+constexpr uint64_t min_sample_count = 10ull;
+constexpr float corr_dist_factor = 1.0;
 constexpr bool allow_scale = false;
 constexpr int threads_per_block = 512;
-
-template <typename Point>
-inline mat3f_t
-make_base(typename pcl::PointCloud<Point>::ConstPtr cloud, int i, int j) {
-    vec3f_t p0 = cloud->points[i].getVector3fMap();
-    vec3f_t p1 = cloud->points[j].getVector3fMap();
-
-    // d
-    vec3f_t e0 = (p1 - p0).normalized();
-    // tangent
-    vec3f_t e1(cloud->points[i].data_c[1], cloud->points[i].data_c[2], cloud->points[i].data_c[3]);
-
-    vec3f_t e2 = e0.cross(e1).normalized();
-    e1 = e2.cross(e0).normalized();
-    mat3f_t base;
-    base << e0, e1, e2;
-    return base;
-}
-
-inline quatf_t
-base_rotation(const mat3f_t& b0, const mat3f_t& b1) {
-    quatf_t q1, q2;
-    vec3f_t b0x = b0.col(0);
-    vec3f_t b0y = b0.col(1);
-    vec3f_t b1x = b1.col(0);
-    vec3f_t b1y = b1.col(1);
-    q1.setFromTwoVectors(b0x, b1x);
-    vec3f_t b0y_trans = q1._transformVector(b0y);
-    q2.setFromTwoVectors(b0y_trans, b1y);
-    return q2 * q1;
-}
-
-template <typename Point0, typename Point1>
-inline mat4f_t
-base_transformation(typename pcl::PointCloud<Point0>::ConstPtr c0, typename pcl::PointCloud<Point1>::ConstPtr c1, uint32_t i0, uint32_t j0, uint32_t i1, uint32_t j1) {
-    auto b0 = make_base<Point0>(c0, i0, j0);
-    auto b1 = make_base<Point1>(c1, i1, j1);
-    mat4f_t r = mat4f_t::Identity();
-    mat4f_t t = mat4f_t::Identity();
-
-    // rotation
-    r.topLeftCorner<3,3>() = base_rotation(b0, b1).toRotationMatrix();
-
-    // rotation * translate first
-    t.block<3,1>(0,3) = -c0->points[i0].getVector3fMap();
-    r = r * t;
-
-    // translate second * scale * rotation * translate first
-    t.block<3,1>(0,3) = c1->points[i1].getVector3fMap();
-    r = t * r;
-
-    return r;
-}
-
-constexpr char program_source[] =
-    "__kernel void icp_projection(__global const float4* pnts, int n,\n"
-    "                             __global const float4* voxel,\n"
-    "                             int sx, int sy, int sz,\n"
-    "                             __global const float* proj,\n"
-    "                             __global const float* guess,\n"
-    "                             float max_voxel_dist,\n"
-    "                             float max_score_dist,\n"
-    "                             __global float4* out_positions,\n"
-    "                             __global int* model_indices,\n"
-    "                             __global int* scene_indices) {\n"
-    "    const uint index = get_global_id(0);\n"
-    "    if (index >= n) {\n"
-    "        return;\n"
-    "    }\n"
-    "    float4 pnt = pnts[index];\n"
-    "    float4 aligned = (float4)(\n"
-    "        guess[0] * pnt.x + guess[4] * pnt.y + guess[ 8] * pnt.z + guess[12] * pnt.w,\n"
-    "        guess[1] * pnt.x + guess[5] * pnt.y + guess[ 9] * pnt.z + guess[13] * pnt.w,\n"
-    "        guess[2] * pnt.x + guess[6] * pnt.y + guess[10] * pnt.z + guess[14] * pnt.w,\n"
-    "        guess[3] * pnt.x + guess[7] * pnt.y + guess[11] * pnt.z + guess[15] * pnt.w\n"
-    "    );\n"
-    "    int x = (int)(proj[0] * aligned.x + proj[4] * aligned.y + proj[ 8] * aligned.z + proj[12] * aligned.w);\n"
-    "    int y = (int)(proj[1] * aligned.x + proj[5] * aligned.y + proj[ 9] * aligned.z + proj[13] * aligned.w);\n"
-    "    int z = (int)(proj[2] * aligned.x + proj[6] * aligned.y + proj[10] * aligned.z + proj[14] * aligned.w);\n"
-    "    if (x >= 0 && x < sx && y >= 0 && y < sy && z >= 0 && z < sz) {\n"
-    "       int idx = x*sy*sz + y*sz + z;\n"
-    "       float dist = length(voxel[idx].xyz - aligned.xyz) / max_voxel_dist;\n"
-    "       if (dist < max_score_dist) {\n"
-    "           model_indices[index] = idx;\n"
-    "           scene_indices[index] = index;\n"
-    "           out_positions[index] = (float4)(aligned.x, aligned.y, aligned.z, 1.f);\n"
-    "       }\n"
-    "    } else {\n"
-    "       model_indices[index] = -1;\n"
-    "       scene_indices[index] = -1;\n"
-    "       out_positions[index] = (float4)(0.f, 0.f, 0.f, 1.f);\n"
-    "    }\n"
-    "}\n"
-    "__kernel void icp_correlation(__global const float4* scene,\n"
-    "                              __global const float4* model,\n"
-    "                              __global const int* indices_scene,\n"
-    "                              __global const int* indices_model,\n"
-    "                              int n,\n"
-    "                              float4 centroid_scene,\n"
-    "                              float4 centroid_model,\n"
-    "                              __global float16* output) {\n"
-    "    const uint index = get_global_id(0);\n"
-    "    if (index >= n) {\n"
-    "        return;\n"
-    "    }\n"
-    "    float4 spt = scene[indices_scene[index]] - centroid_scene;\n"
-    "    float4 mpt = model[indices_model[index]] - centroid_model;\n"
-    "    float norm = 1.f / (n-1);"
-    "    output[index].s0 = spt.x * mpt.x * norm;\n"
-    "    output[index].s1 = spt.y * mpt.x * norm;\n"
-    "    output[index].s2 = spt.z * mpt.x * norm;\n"
-    "    output[index].s3 = spt.x * mpt.y * norm;\n"
-    "    output[index].s4 = spt.y * mpt.y * norm;\n"
-    "    output[index].s5 = spt.z * mpt.y * norm;\n"
-    "    output[index].s6 = spt.x * mpt.z * norm;\n"
-    "    output[index].s7 = spt.y * mpt.z * norm;\n"
-    "    output[index].s8 = spt.z * mpt.z * norm;\n"
-    "    output[index].s9 = 0.f;\n"
-    "    output[index].sa = 0.f;\n"
-    "    output[index].sb = 0.f;\n"
-    "    output[index].sc = 0.f;\n"
-    "    output[index].sd = 0.f;\n"
-    "    output[index].se = 0.f;\n"
-    "    output[index].sf = 0.f;\n"
-    "}\n"
-    ;
+constexpr int query_limit = 10;
 
 }  // namespace detail
 
-template <typename Point>
-struct scene<Point>::impl {
-    impl(typename cloud_t::ConstPtr cloud, gpu_state::sptr_t state) : cloud_(cloud), state_(state), program_(state), projection_(16, state->context), normalization_(16, state->context), transform_(16, state->context), uvw_transform_(16, state->context) {}
+template <typename Proj, typename Point>
+struct scene<Proj, Point>::impl {
+    impl(typename cloud_t::Ptr cloud) : cloud_(cloud) {}
 
     ~impl() {
     }
 
-    void init(model<Point>& m, float max_corr_dist) {
-        // copy points to device
-        std::vector<float> cpu_data;
-        cpu_data.resize(cloud_->size() * 4);
-        for (uint32_t i = 0; i < cloud_->size(); ++i) {
-            cpu_data[i * 4 + 0] = cloud_->points[i].x;
-            cpu_data[i * 4 + 1] = cloud_->points[i].y;
-            cpu_data[i * 4 + 2] = cloud_->points[i].z;
-            cpu_data[i * 4 + 3] = 1.f;
+    std::vector<match_t>
+    find_all(model<Proj, Point>& m, float octree_diameter_factor, float model_match_factor, float early_out_factor, const sample_parameters& sample_params, uint32_t max_icp_iterations, bool only_first) {
+        subset_t tangent_indices;
+        for (auto && [idx, pnt] : vw::zip(vw::ints(0ul), cloud_->points)) {
+            if (tangent(pnt).norm() > 0.7f) {
+                tangent_indices.push_back(idx);
+            }
+        }
+        cloud_->set_indices(tangent_indices);
+        mask_.resize(cloud_->size(), false);
+        uint32_t considered = 0;
+
+        std::vector<match_t> results;
+        float min_voxel = octree_diameter_factor * m.cloud()->diameter();
+        pdebug("min voxel size: {}", min_voxel);
+        typename octree_t::sptr_t octree = octree_t::from_pointcloud(cloud_, 10, min_voxel_size{min_voxel});
+
+        bool found = false;
+
+        for (int32_t level = octree->depth(); level >= 0; --level) {
+            if (only_first && found) break;
+
+            std::cout << "############## LEVEL " << level << " #############" << "\n";
+            typename octree_t::level_traverse level_rng(octree->root(), static_cast<uint8_t>(level));
+            uint32_t leaf_count = ranges::distance(level_rng);
+            uint32_t leaf_idx = 0;
+            ranges::for_each(level_rng, [&] (node const& n) {
+                if (only_first && found) return;
+                std::cout << "####### LEAF " << (++leaf_idx) << "/" << leaf_count << " ######" << "\n";
+
+                // gather subtree indices
+                subset_t sample_candidates;
+                // initialize sample candidates by voxel indices
+                if (leaf_node const* leaf = std::get_if<leaf_node>(&n)) {
+                    sample_candidates = leaf->points;
+                } else {
+                    uint32_t subtree_size = 0;
+                    ranges::for_each(typename octree_t::leaf_traverse(n), [&] (node const& subtree_leaf) {
+                        leaf_node const& leaf = std::get<leaf_node>(subtree_leaf);
+                        sample_candidates.insert(sample_candidates.end(), leaf.points.begin(), leaf.points.end());
+                        ++subtree_size;
+                    });
+                    std::sort(sample_candidates.begin(), sample_candidates.end());
+                }
+
+                // restrict sampling to tangent indices (score/correspondences are done on all points, neighborhood queries on all tangent indices)
+                subset_t residual;
+                std::set_intersection(sample_candidates.begin(), sample_candidates.end(), tangent_indices.begin(), tangent_indices.end(), std::back_inserter(residual));
+                sample_candidates = residual;
+
+                uint32_t subtree_count = sample_candidates.size();
+                println("Search in {} sample candidates...", subtree_count);
+                if (!subtree_count) return;
+
+                uint32_t before = results.size();
+                while(true) {
+                    if (only_first && found) break;
+                    uint32_t min_points = model_match_factor * m.cloud()->size();
+                    // check if remaining points could even surpass the validity threshold
+                    if ((cloud_->size() - considered) < min_points) {
+                        min_points = model_match_factor * cloud_->size();
+                    }
+
+                    if (!min_points) {
+                        break;
+                    }
+
+                    match_t match = find(
+                        m,
+                        early_out_factor * m.cloud()->size(),
+                        sample_params, sample_candidates);
+
+                    if (std::get<1>(match).size() < min_points) {
+                        break;
+                    }
+
+                    mat4f_t uvw_trans;
+                    subset_t scene_corrs, model_corrs;
+                    typename Proj::handle_t proj;
+                    std::tie(uvw_trans, scene_corrs, model_corrs, proj) = max_icp_iterations ? icp_(m, match, max_icp_iterations) : match;
+
+                    pdebug("  accept at {} of {} points", scene_corrs.size(), min_points);
+
+                    // transform is good enough
+                    pdebug("removed {} indices from index list", scene_corrs.size());
+                    subset_t new_subset;
+                    std::set_difference(sample_candidates.begin(), sample_candidates.end(), scene_corrs.begin(), scene_corrs.end(), std::back_inserter(new_subset));
+                    sample_candidates = new_subset;
+
+                    for (auto idx : scene_corrs) {
+                        mask_[idx] = true;
+                    }
+                    considered += scene_corrs.size();
+
+                    results.push_back({uvw_trans.inverse(), scene_corrs, model_corrs, proj});
+                    found = true;
+                }
+                std::cout << (results.size() - before) << " transformations found.\n";
+            });
         }
 
-        gpu_data_ = gpu_data_t(cloud_->size(), state_->context);
-        gpu::copy(
-            reinterpret_cast<gpu::float4_*>(cpu_data.data()),
-            reinterpret_cast<gpu::float4_*>(cpu_data.data()) + cloud_->size(),
-            gpu_data_.begin(), state_->queue);
-        cpu_data.clear();
-
-        // compile program
-        std::string proj_shader = projector_t::opencl_path();
-        program_.compile("util.cl", proj_shader, "icp.cl");
-
-        // setup projection kernel
-        uint32_t n = gpu_data_.size();
-        vec2i_t ext = m.extents();
-        vec2i_t margin = m.margin();
-        projector_t model_proj = m.projector();
-        gpu::eigen_copy_matrix_to_buffer(model_proj.projection_matrix(), projection_.begin(), state_->queue);
-        gpu::eigen_copy_matrix_to_buffer(m.normalization(), normalization_.begin(), state_->queue);
-        model_corrs_ = gpu::vector<int>(n, state_->context);
-        scene_corrs_ = gpu::vector<int>(n, state_->context);
-        positions_ = gpu::vector<gpu::float4_>(n, state_->context);
-        corr_matrices_ = gpu::vector<gpu::float16_>(n, this->state_->context);
-
-        proj_kernel_ = program_.kernel(
-            "icp_projection",
-            gpu_data_.get_buffer(),
-            n,
-            m.device_data().get_buffer(),
-            gpu::int2_(ext[0], ext[1]),
-            gpu::int2_(margin[0], margin[1]),
-            no_arg,
-            no_arg,
-            projection_.get_buffer(),
-            normalization_.get_buffer(),
-            max_corr_dist,
-            positions_.get_buffer(),
-            model_corrs_.get_buffer(),
-            scene_corrs_.get_buffer()
-        );
-
-        corr_kernel_ = program_.kernel(
-            "icp_correlation",
-            positions_.get_buffer(),
-            m.device_data().get_buffer(),
-            scene_corrs_.get_buffer(),
-            model_corrs_.get_buffer(),
-            no_arg,
-            no_arg,
-            no_arg,
-            corr_matrices_.get_buffer()
-        );
-
-        global_threads_ = n;
-        int res = n % detail::threads_per_block;
-        if (res) {
-            global_threads_ += detail::threads_per_block - res;
-        }
+        return results;
     }
 
-    std::tuple<mat4f_t, mat4f_t, uint32_t>
-    find(model<Point>& m, uint32_t accept_threshold, uint32_t early_out_threshold, const sample_parameters& params, uint32_t max_icp_iterations, subset_t subset, statistics* stats) {
-        pcl::IndicesPtr indices;
-        if (subset.empty()) {
-            indices = pcl::IndicesPtr(new std::vector<int>(cloud_->size()));
-            std::iota(indices->begin(), indices->end(), 0);
-        } else {
-            indices = pcl::IndicesPtr(
-                new std::vector<int>(subset.begin(), subset.end()));
-        }
-        kdtree_.setInputCloud(cloud_, indices);
-        //float lower = params.min_diameter_factor;
+    match_t
+    find(model<Proj, Point>& m, uint32_t early_out_threshold, const sample_parameters& params, const subset_t& sample_candidates) {
+        uint32_t n_model = m.point_count();
+        uint32_t n_scene = sample_candidates.size();
+
+        float lower = m.diameter() * params.min_diameter_factor;
         float upper = m.diameter() * params.max_diameter_factor;
+        lower *= lower;
 
         std::mt19937 rng;
         uint32_t seed = 13;
@@ -244,318 +147,318 @@ struct scene<Point>::impl {
             seed = now.time_since_epoch().count();
         }
         rng.seed(seed);
-        std::shuffle(indices->begin(), indices->end(), rng);
-        // DEBUG
-        (*indices)[0] = 0;
 
         uint32_t best_score = 0;
-        mat4f_t  best_transform = mat4f_t::Identity();
+        mat4f_t  best_uvw_trans = mat4f_t::Identity();
+        typename Proj::handle_t best_projector = nullptr;
         uint64_t valid_sample_count = 0, sample_count = 0;
 
-        uint32_t n_model = m.cloud()->size();
-        uint32_t n_scene = indices->size();
-        uint64_t outer_bound = static_cast<uint64_t>(std::log(1.0 - detail::match_probability) / std::log(1.0 - static_cast<double>(n_model) / n_scene));
-        outer_bound = std::max(outer_bound, 10ul);
+        double outer_prob = static_cast<double>(n_model) / n_scene;
+        uint64_t outer_bound = static_cast<uint64_t>(std::log(1.0 - detail::match_probability) / std::log(1.0 - outer_prob));
+        outer_bound = std::max(outer_bound, detail::min_sample_count);
+        outer_bound = std::min(outer_bound, static_cast<uint64_t>(n_scene));
 
-        fmt::print("outer bound: {}\n", outer_bound);
+        pdebug("outer bound: {},  p: {} / {} = {}", outer_bound, n_model, n_scene, outer_prob);
 
-        for (uint64_t outer = 0; outer < std::min(indices->size(), outer_bound); ++outer) {
-            int i = (*indices)[outer];
+        for (auto i : vw::sample(sample_candidates, outer_bound, rng)) {
+            if (mask_[i]) continue;
             const Point& p1 = cloud_->points[i];
 
-            std::vector<int> nn;
-            std::vector<float> dist;
-            kdtree_.radiusSearch(p1, upper, nn,
-                                 dist);
+            auto nn = cloud_->radius_search_inclusive(upper, p1).first;
             if (nn.empty()) continue;
-            std::shuffle(nn.begin(), nn.end(), rng);
 
             double prob = static_cast<double>(n_model) / nn.size();
             uint64_t inner_bound = static_cast<uint64_t>(-std::log(1.0 - detail::match_probability) / prob);
-            // DEBUG: set to meaningful minimum
-            inner_bound = std::max(inner_bound, nn.size());
+            inner_bound = std::max(inner_bound, detail::min_sample_count);
             inner_bound = std::min(inner_bound, nn.size());
+            //pdebug("inner bound: {},  p: {} / {} = {}", inner_bound, n_model, nn.size(), prob);
 
-            for (uint64_t inner0 = 0; inner0 < inner_bound; ++inner0) {
-                int j = nn[inner0];
-                if (j == i) continue;
+            //uint32_t valid_in_ball = 0;
+            //uint32_t max_ball_score = 0;
 
-                bool debug = j == 265;
+            for (auto j : vw::sample(nn, inner_bound, rng)) {
+                if (mask_[j]) continue;
+                if (static_cast<uint32_t>(j) == i) continue;
 
-                projector_t proj(0.f);
-
-
+                bool debug = false; //i==54 && j ==313;
                 const Point& p2 = cloud_->points[j];
-                proj.fit(p1, p2);
-
-                if (debug) {
-                    pdebug("   scene normals:");
-                    pdebug("   n0: {}", p1.getNormalVector3fMap().transpose());
-                    pdebug("   n1: {}", p2.getNormalVector3fMap().transpose());
-                    pdebug("   axis: {}", proj.axis().transpose());
-                    pdebug("   dot: {}", p2.getNormalVector3fMap().dot(p1.getNormalVector3fMap()));
-                }
-
-                //fmt::print("sample pair {} {}\n", i, j);
-
-                if (debug) pdebug("scene descriptor");
-                vec2f_t d = proj.intrinsic_difference(p1.getVector3fMap(), p2.getVector3fMap(), debug);
-
-                auto && [q_first, q_last] = m.query(p1, p2, d, debug);
-                if (q_first != q_last) {
-                    ++valid_sample_count;
-                }
-
                 ++sample_count;
+
+                if ((p2.getVector3fMap() - p1.getVector3fMap()).squaredNorm() < lower) continue;
+
+                typename Proj::handle_t proj;
+                if constexpr (Proj::sample_count == 2) {
+                    proj = traits_t::init_from_samples({p1, p2});
+                } else {
+                    proj = traits_t::init_from_samples({p1});
+                }
+                auto f = traits_t::feature(proj, p1, p2);
+
+                if (!traits_t::valid(proj, f, m.feature_bounds(), M_PI / 10.f, 2.0*M_PI, 0.4f, 1.f)) {
+                    continue;
+                }
+
+                auto && [q_first, q_last] = m.query(f, debug);
+                if (q_first != q_last) {
+                    //pdebug("query count: {}", std::distance(q_first, q_last));
+                    ++valid_sample_count;
+                    //++valid_in_ball;
+                }
+
+                uint32_t query = 0;
                 for (auto it = q_first; it != q_last; ++it) {
-                    auto m_i = it->second.first;
-                    //auto [m_i, m_j] = it->second;
+                    if (detail::query_limit > 0 && (query++) > detail::query_limit) break;
+                    auto && [m_i, m_j] = it->second;
+                    //debug = i==54 && j ==313 && m_i == 54 && m_j == 313;
 
-                    //if (i == static_cast<int>(m_i) && j == static_cast<int>(m_j)) {
-                    //if (m_i == 0) {
-                        //pdebug("    model pair {} {}", m_i, m_j);
-                        //pdebug("    desc {}", it->first.transpose());
-                    //}
+                    vec3f_t uvw_ref_model = Proj::project(m.projector(), m.cloud()->points[m_i].getVector3fMap());
+                    vec3f_t uvw_ref_scene = Proj::project(proj, cloud_->points[i].getVector3fMap());
+                    vec3f_t uvw_tgt_0_model = Proj::tangent(m.projector(), m.cloud()->points[m_i]);
+                    vec3f_t uvw_tgt_1_model = Proj::tangent(m.projector(), m.cloud()->points[m_j]);
+                    vec3f_t uvw_tgt_0_scene = Proj::tangent(proj, cloud_->points[i]);
+                    vec3f_t uvw_tgt_1_scene = Proj::tangent(proj, cloud_->points[j]);
+                    mat4f_t uvw_trans = base_to_base_(uvw_ref_scene, uvw_tgt_0_scene, uvw_tgt_1_scene, uvw_ref_model, uvw_tgt_0_model, uvw_tgt_1_model, debug);
 
-                    mat4f_t transform = proj.transform_to(m.projector(), p1.getVector3fMap(), m.cloud()->points[m_i].getVector3fMap());
-                    uint32_t score = correspondence_count_(m, proj, transform);
-                    //fmt::print("score: {}\n", score);
-
+                    project_(m, proj, uvw_trans);
+                    uint32_t score = scene_corrs_.size();
+                    //max_ball_score = std::max(max_ball_score, score);
                     if (score > best_score) {
-                        best_transform = transform;
+                        best_uvw_trans = uvw_trans;
                         best_score = score;
+                        best_projector = proj;
 
-                        fmt::print("improved score: {}\n", best_score);
-
-                        if (detail::early_out && best_score > early_out_threshold) {
+                        if (detail::early_out && best_score >= early_out_threshold) {
                             fmt::print("early out at: {} of {} points\n", best_score, m.cloud()->size());
-                            mat4f_t uvw_transform;
-                            std::tie(uvw_transform, std::ignore) = icp_(m, transform, max_icp_iterations);
-                            return {transform, uvw_transform, best_score};
+                            return {uvw_trans, scene_corrs_, model_corrs_, proj};
                         }
                     }
                 }
             }
 
-            // DEBUG
-            break;
+            //pdebug("valid pairs in ball: {}", valid_in_ball);
+            //pdebug("valid pairs in ball: {}, with max score of: {}", valid_in_ball, max_ball_score);
         }
 
-        if (stats) {
-            stats->rejection_rate =
-                static_cast<double>(sample_count - valid_sample_count) /
-                sample_count;
-        }
 
-        mat4f_t uvw_transform;
-        std::tie(uvw_transform, std::ignore) = icp_(m, best_transform, max_icp_iterations);
-        return {best_transform, uvw_transform, best_score};
+        if (best_projector) {
+            project_(m, best_projector, best_uvw_trans);
+        } else {
+            scene_corrs_.clear();
+        }
+        return {best_uvw_trans, scene_corrs_, model_corrs_, best_projector};
+    }
+
+    typename cloud_t::Ptr
+    instantiate(model<Proj, Point>& m, const match_t& match) {
+        mat4f_t t;
+        subset_t model_corrs;
+        typename Proj::handle_t proj;
+        std::tie(t, std::ignore, model_corrs, proj) = match;
+
+        typename cloud_t::Ptr inst = cloud_t::empty();
+        for (uint32_t idx : model_corrs) {
+            vec3f_t uvw_model = m.uvw_cloud()->points[idx].getVector3fMap();
+            vec3f_t uvw_scene = (t * uvw_model.homogeneous()).head(3);
+            Point inst_pnt;
+            inst_pnt.getVector3fMap() = Proj::unproject(proj, uvw_scene);
+            inst->push_back(inst_pnt);
+        }
+        // scene example
+        //for (auto idx : corrs) {
+            //vec3f_t pos = cloud_->points[idx].getVector3fMap();
+            //vec4f_t uvw = t * Proj::project(proj, pos).homogeneous();
+            //Point inst_pnt;
+            //inst_pnt.getVector3fMap() = Proj::unproject(m.projector(), uvw.head(3));
+            //inst->push_back(inst_pnt);
+        //}
+
+        return inst;
     }
 
     void
-    project_(model<Point>& m, const mat4f_t& transform, const mat4f_t& uvw_transform = mat4f_t::Identity()) {
-        gpu::eigen_copy_matrix_to_buffer(transform, transform_.begin(), state_->queue);
-        proj_kernel_.set_arg(5, transform_.get_buffer());
-        gpu::eigen_copy_matrix_to_buffer(uvw_transform, uvw_transform_.begin(), state_->queue);
-        proj_kernel_.set_arg(6, uvw_transform_.get_buffer());
-        state_->queue.enqueue_1d_range_kernel(proj_kernel_, 0, global_threads_, detail::threads_per_block);
-
-        std::vector<gpu::float4_> positions(positions_.size());
-        //std::vector<int> model_corrs(positions_.size());
-        gpu::copy(positions_.begin(), positions_.end(), positions.begin(), state_->queue);
-        //gpu::copy(model_corrs_.begin(), model_corrs_.end(), model_corrs.begin(), state_->queue);
-        for (uint32_t i = 0; i < positions.size(); ++i) {
-            //fmt::print("pos: {} {} {}\n", positions[i][0], positions[i][1], positions[i][2]);
-            ////if (model_corrs[i] >= 0) {
-            if (positions[i][3] > 0.f) {
-                //fmt::print("dist: {}\n", positions[i][3]);
-            }
-        }
-    }
-
-    template <typename IndexIterator>
-    gpu::float4_ compute_centroid_(gpu::vector<gpu::float4_>& data, IndexIterator begin, IndexIterator end) {
-        gpu::float4_ result;
-        gpu::reduce(
-            gpu::make_permutation_iterator(data.begin(), begin),
-            gpu::make_permutation_iterator(gpu::make_buffer_iterator<gpu::float4_>(data.get_buffer(), end.get_index()), end),
-            &result,
-            this->state_->queue
-        );
-        float inv_count = 1.f / end.get_index();
-        result[0] *= inv_count;
-        result[1] *= inv_count;
-        result[2] *= inv_count;
-        //result[0] /= result[3];
-        //result[1] /= result[3];
-        //result[2] /= result[3];
-        return result;
-    }
-
-    uint32_t
-    correspondence_count_(model<Point>& m, const projector_t& proj, const mat4f_t& transform) {
-        project_(m, transform);
-
-        uint32_t sum = 0;
-        BOOST_COMPUTE_FUNCTION(int, indicator, (int x),
-        {
-            return x >= 0 ? 1 : 0;
-        });
-        gpu::transform_reduce(scene_corrs_.begin(), scene_corrs_.end(), &sum, indicator, gpu::plus<int>(), this->state_->queue);
-
-        return sum;
-    }
-
-    std::pair<mat4f_t, std::vector<int>>
-    icp_(model<Point>& m, const mat4f_t& transform, uint32_t max_iterations) {
-        project_(m, transform);
-
-        gpu::buffer_iterator<int> valid_model;
-        gpu::buffer_iterator<int> valid_scene;
-
-        valid_model = gpu::stable_partition(
-            model_corrs_.begin(), model_corrs_.end(),
-            boost::compute::lambda::_1 >= 0, this->state_->queue);
-        valid_scene = gpu::stable_partition(
-            scene_corrs_.begin(), scene_corrs_.end(),
-            boost::compute::lambda::_1 >= 0, this->state_->queue);
-
-        mat4f_t uvw_transform = mat4f_t::Identity();
-        for (uint32_t i = 0; i < max_iterations; ++i) {
-            uint32_t n_model = valid_model.get_index();
-            uint32_t n_scene = valid_scene.get_index();
-            if (!n_model) {
-                // no correspondences
-                return {mat4f_t::Identity(), std::vector<int>()};
-            }
-            int threads = n_scene;
-            int res = n_scene % detail::threads_per_block;
-            if (res) {
-                threads += detail::threads_per_block - res;
-            }
-
-            // compute centroids
-            gpu::float4_ centroid_scene =
-                compute_centroid_(positions_, scene_corrs_.begin(), valid_scene);
-            gpu::float4_ centroid_model =
-                compute_centroid_(m.device_data(),
-                                  model_corrs_.begin(), valid_model);
-
-            // coll correlation kernel
-            corr_kernel_.set_arg(4, n_scene);
-            corr_kernel_.set_arg(5, centroid_scene);
-            corr_kernel_.set_arg(6, centroid_model);
-            this->state_->queue.enqueue_1d_range_kernel(corr_kernel_, 0, threads, detail::threads_per_block);
-            // sum of per-point correlation matrices
-            gpu::float16_ corr_16;
-            gpu::reduce(corr_matrices_.begin(), gpu::make_buffer_iterator<gpu::float16_>(corr_matrices_.get_buffer(), n_scene), &corr_16, this->state_->queue);
-            mat3f_t corr_matrix;
-            for (int i = 0; i < 9; ++i) {
-                corr_matrix.data()[i] = corr_16[i];
-            }
-
-            // compute SVD for rotation estimation
-            Eigen::JacobiSVD<mat3f_t> svd(corr_matrix, Eigen::ComputeFullU | Eigen::ComputeFullV);
-            mat4f_t icp_mat = mat4f_t::Identity();
-            icp_mat.topLeftCorner<3,3>() = svd.matrixV() * svd.matrixU().transpose();
-            vec3f_t cm(centroid_model[0], centroid_model[1], centroid_model[2]);
-            vec3f_t cs(centroid_scene[0], centroid_scene[1], centroid_scene[2]);
-            icp_mat.block<3,1>(0,3) = cm - icp_mat.topLeftCorner<3,3>() * cs;
-
-            // update and reproject for correct correspondences
-            uvw_transform = icp_mat * uvw_transform;
-            project_(m, transform, uvw_transform);
-            valid_model = gpu::stable_partition(
-                model_corrs_.begin(), model_corrs_.end(),
-                boost::compute::lambda::_1 >= 0, this->state_->queue);
-            valid_scene = gpu::stable_partition(
-                scene_corrs_.begin(), scene_corrs_.end(),
-                boost::compute::lambda::_1 >= 0, this->state_->queue);
+    project_(model<Proj, Point>& m, typename Proj::const_handle_t scene_proj, const mat4f_t& uvw_trans, float corr_dist_factor = -1.f, bool debug = false) {
+        uint32_t concurrency = std::thread::hardware_concurrency() - 1;
+        uint32_t batch_size = cloud_->size() / concurrency;
+        if (cloud_->size() % concurrency > 0) {
+            ++batch_size;
         }
 
-        uint32_t n_scene = valid_scene.get_index();
-        std::vector<int> corr(n_scene);
-        gpu::copy(scene_corrs_.begin(), valid_scene, corr.begin(), this->state_->queue);
+        float thres = corr_dist_factor < 0.f ? detail::corr_dist_factor * m.uvw_resolution() : corr_dist_factor * m.uvw_resolution();
 
-        return {uvw_transform, corr};
+        std::vector<std::future<std::pair<subset_t, subset_t>>> futures;
+        for (auto chunk : vw::chunk(vw::ints(0ul, cloud_->size()), batch_size)) {
+            futures.push_back(std::async(std::launch::async, [&, chunk] () {
+                subset_t sub_scene_corrs, sub_model_corrs;
+                for (uint32_t idx : chunk) {
+                    if (mask_[idx]) continue;
+                    vec3f_t uvw = Proj::project(scene_proj, cloud_->points[idx].getVector3fMap());
+                    uvw = (uvw_trans * uvw.homogeneous()).head(3);
+                    std::optional<uint32_t> uvw_n = m.voxel_query(uvw);
+                    if (!uvw_n) {
+                        continue;
+                    }
+                    float dist = Proj::intrinsic_distance(m.projector(), uvw, m.uvw_cloud()->points[uvw_n.value()].getVector3fMap());
+                    if (dist <= thres) {
+                        sub_scene_corrs.push_back(idx);
+                        sub_model_corrs.push_back(uvw_n.value());
+                    }
+                }
+                //if (debug) pdebug("chunk score: {} / {}", sub_scene_corrs.size(), chunk.size());
+                return std::pair<subset_t, subset_t>(sub_scene_corrs, sub_model_corrs);
+            }));
+        }
+
+        scene_corrs_.clear();
+        model_corrs_.clear();
+        for (auto& fut : futures) {
+            auto && [subs, subm] = fut.get();
+            scene_corrs_.insert(scene_corrs_.end(), subs.begin(), subs.end());
+            model_corrs_.insert(model_corrs_.end(), subm.begin(), subm.end());
+        }
+
+        //if (debug) pdebug("score: {} / {}", scene_corrs_.size(), cloud_->size());
+    }
+
+    mat3f_t gram_schmidt_(const mat3f_t& base, bool col_space = true) {
+        mat3f_t m = base;
+
+        if (col_space) {
+            m.col(1) -= m.col(1).dot(m.col(0)) * m.col(0);
+            m.col(1).normalize();
+            m.col(2) -= m.col(2).dot(m.col(0)) * m.col(0);
+            m.col(2) -= m.col(2).dot(m.col(1)) * m.col(1);
+            m.col(2).normalize();
+        } else {
+            m.row(1) -= m.row(1).dot(m.row(0)) * m.row(0);
+            m.row(1).normalize();
+            m.row(2) -= m.row(2).dot(m.row(0)) * m.row(0);
+            m.row(2) -= m.row(2).dot(m.row(1)) * m.row(1);
+            m.row(2).normalize();
+        }
+
+        return m;
+    }
+
+    mat4f_t base_to_base_(const vec3f_t& origin_0, const mat3f_t& base_0, const vec3f_t& origin_1, const mat3f_t& base_1) {
+        mat4f_t t = mat4f_t::Identity();
+
+        // rotational part
+        quatf_t q0 = quatf_t::FromTwoVectors(base_0.col(0), base_1.col(0));
+        vec3f_t d1 = q0._transformVector(base_0.col(1));
+        quatf_t q1 = quatf_t::FromTwoVectors(d1, base_1.col(1));
+
+        // translational part
+        t.topLeftCorner<3,3>() = (q1*q0).toRotationMatrix();
+        t.block<3,1>(0,3) = origin_1 - t.topLeftCorner<3,3>() * origin_0;
+
+        return t;
+    }
+
+    mat4f_t base_to_base_(const vec3f_t& origin_0, const vec3f_t& dir_a_0, const vec3f_t& dir_b_0, const vec3f_t& origin_1, const vec3f_t& dir_a_1, const vec3f_t& dir_b_1, bool debug = false) {
+        mat4f_t t = mat4f_t::Identity();
+
+        // rotational part
+        quatf_t q0 = quatf_t::FromTwoVectors(dir_a_0, dir_a_1);
+
+        // localized version of second vectors
+        vec3f_t l0 = q0._transformVector(dir_b_0);
+        vec3f_t l1 = dir_b_1;
+        // "local" due to gram-schmidt orthogonalization with respect to first vectors:
+        l0 -= l0.dot(dir_a_1) * dir_a_1;
+        l1 -= l1.dot(dir_a_1) * dir_a_1;
+        quatf_t q1 = quatf_t::FromTwoVectors(l0, l1);
+
+        // translational part
+        t.topLeftCorner<3,3>() = (q1*q0).toRotationMatrix();
+        t.block<3,1>(0,3) = origin_1 - t.topLeftCorner<3,3>() * origin_0;
+
+        return t;
+    }
+
+    match_t
+    icp_(model<Proj, Point>& m, const match_t& match, uint32_t max_iterations) {
+        if (max_iterations == 0) return match;
+
+        mat4f_t best_trans;
+        subset_t best_corrs;
+        typename Proj::handle_t proj;
+        std::tie(best_trans, best_corrs, std::ignore, proj) = match;
+
+
+        // ICP is performed in uvw space
+        typename cloud_t::Ptr uvw_scene = cloud_t::empty();
+        for (auto idx : vw::ints(0ul, cloud_->size())) {
+            if (mask_[idx]) continue;
+            const Point& pnt = cloud_->points[idx];
+            vec3f_t uvw = Proj::project(proj, pnt.getVector3fMap());
+            Point uvw_point;
+            uvw_point.getVector4fMap() = best_trans * uvw.homogeneous();
+            uvw_scene->push_back(uvw_point);
+        }
+        typename cloud_t::Ptr uvw_model = m.uvw_cloud();
+
+        float max_corr_dist = 3.f * detail::corr_dist_factor * m.uvw_resolution();
+        pcl::IterativeClosestPoint<Point, Point, double> icp;
+        icp.setInputSource(uvw_scene->native());
+        icp.setInputTarget(uvw_model->native());
+        icp.setSearchMethodSource(uvw_scene->kdtree());
+        icp.setSearchMethodTarget(uvw_model->kdtree());
+        icp.setMaximumIterations(max_iterations);
+        icp.setMaxCorrespondenceDistance(max_corr_dist);
+        //double test_before = icp.getFitnessScore(max_corr_dist);
+        icp.align(*uvw_scene->native());
+        //double test_after = icp.getFitnessScore(max_corr_dist);
+
+        best_trans = icp.getFinalTransformation().template cast<float>() * best_trans;
+        project_(m, proj, best_trans);
+
+        return {best_trans, scene_corrs_, model_corrs_, proj};
     }
 
     typename cloud_t::ConstPtr cloud() const {
         return cloud_;
     }
 
-    //gpu_data_t& device_data() {
-        //return gpu_data_;
-    //}
+    typename cloud_t::Ptr      cloud_;
 
-    //const gpu_data_t& device_data() const {
-        //return gpu_data_;
-    //}
-
-    typename cloud_t::ConstPtr cloud_;
-    gpu_state::sptr_t          state_;
-    pcl::search::KdTree<Point> kdtree_;
-    gpu_data_t                 gpu_data_;
-
-    gpu_program program_;
-    gpu::kernel proj_kernel_;
-    gpu::kernel corr_kernel_;
-    int global_threads_;
-    gpu::vector<float> projection_;
-    gpu::vector<float> normalization_;
-    gpu::vector<float> transform_;
-    gpu::vector<float> uvw_transform_;
-    gpu::vector<gpu::float4_> positions_;
-    gpu::vector<gpu::float16_> corr_matrices_;
-    gpu::vector<int> model_corrs_;
-    gpu::vector<int> scene_corrs_;
+    subset_t scene_corrs_;
+    subset_t model_corrs_;
+    std::vector<bool> mask_;
 };
 
 
-template <typename Point>
+template <typename Proj, typename Point>
 inline
-scene<Point>::scene(typename cloud_t::ConstPtr cloud, gpu_state::sptr_t state) : impl_(new impl(cloud, state)) {
+scene<Proj, Point>::scene(typename cloud_t::Ptr cloud) : impl_(new impl(cloud)) {
 }
 
-template <typename Point>
+template <typename Proj, typename Point>
 inline
-scene<Point>::~scene() {
+scene<Proj, Point>::~scene() {
 }
 
-template <typename Point>
-inline void
-scene<Point>::init(model<Point>& m, float max_corr_dist) {
-    impl_->init(m, max_corr_dist);
+template <typename Proj, typename Point>
+inline std::vector<typename scene<Proj, Point>::match_t>
+scene<Proj, Point>::find_all(model<Proj, Point>& m, float octree_diameter_factor, float model_match_factor, float early_out_factor, const sample_parameters& sample_params, uint32_t max_icp_iterations, bool only_first) {
+    return impl_->find_all(m, octree_diameter_factor, model_match_factor, early_out_factor, sample_params, max_icp_iterations, only_first);
 }
 
-//template <typename Point>
-//inline mat4f_t
-//scene<Point>::find(model<Point>& m, uint32_t early_out_threshold, const sample_parameters& sample_params, statistics* stats) {
-    //return impl_->find(m, early_out_threshold, sample_params, subset_t(), stats);
-//}
-
-template <typename Point>
-inline std::tuple<mat4f_t, mat4f_t, uint32_t>
-scene<Point>::find(model<Point>& m, uint32_t accept_threshold, uint32_t early_out_threshold, const sample_parameters& sample_params, uint32_t max_icp_iterations, const subset_t& subset, statistics* stats) {
-    return impl_->find(m, accept_threshold, early_out_threshold, sample_params, max_icp_iterations, subset, stats);
+template <typename Proj, typename Point>
+inline typename scene<Proj, Point>::match_t
+scene<Proj, Point>::find(model<Proj, Point>& m, uint32_t early_out_threshold, const sample_parameters& sample_params, const subset_t& sample_candidates) {
+    return impl_->find(m, early_out_threshold, sample_params, sample_candidates);
 }
 
-template <typename Point>
-inline typename scene<Point>::cloud_t::ConstPtr
-scene<Point>::cloud() const {
+template <typename Proj, typename Point>
+inline typename scene<Proj, Point>::cloud_t::Ptr
+scene<Proj, Point>::instantiate(model<Proj, Point>& m, const match_t& match) {
+    return impl_->instantiate(m, match);
+}
+
+template <typename Proj, typename Point>
+inline typename scene<Proj, Point>::cloud_t::ConstPtr
+scene<Proj, Point>::cloud() const {
     return impl_->cloud();
 }
-
-//template <typename Point>
-//inline typename scene<Point>::gpu_data_t&
-//scene<Point>::device_data() {
-    //return impl_->device_data();
-//}
-
-//template <typename Point>
-//inline const typename scene<Point>::gpu_data_t&
-//scene<Point>::device_data() const {
-    //return impl_->device_data();
-//}
 
 }  // namespace triplet_match
