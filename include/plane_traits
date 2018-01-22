@@ -4,6 +4,7 @@
 #include "common"
 #include "discretize"
 #include "pointcloud"
+#include "cartesian_tuple"
 
 namespace triplet_match {
 
@@ -11,6 +12,7 @@ template <typename Point>
 struct plane_traits {
     typedef pointcloud<Point> cloud_t;
     struct state_t {
+        float threshold;
         vec3f_t origin;
         mat4f_t g2l;
         mat4f_t l2g;
@@ -19,49 +21,26 @@ struct plane_traits {
     typedef std::shared_ptr<state_t> handle_t;
     typedef std::shared_ptr<const state_t> const_handle_t;
 
-    static constexpr int feature_dimension = 2;
     static constexpr int sample_count = 1;
 
-    typedef std::array<Point, sample_count> samples_t;
-    typedef Eigen::Matrix<float, feature_dimension, 1> feature_t;
-    typedef Eigen::Matrix<uint32_t, feature_dimension, 1> discrete_feature_t;
-    typedef Eigen::AlignedBox<float, feature_dimension> feature_bounds_t;
+    typedef repeat_t<Point, sample_count> samples_t;
 
     static handle_t
     init_from_model(typename cloud_t::ConstPtr cloud,
                     const subset_t& subset = subset_t());
 
-    static handle_t init_from_samples(const samples_t& samples);
+    static handle_t init_from_samples(const_handle_t model_handle, const samples_t& samples);
 
-    //static mat4f_t
-    //alignment(const_handle_t handle_i, const_handle_t handle_j,
-    //          const samples_t& samples_i, const samples_t& samples_j, bool debug = false);
-
-    static vec3f_t project(const_handle_t handle, const vec3f_t& xyz);
+    static std::optional<vec3f_t> project(const_handle_t handle, const vec3f_t& xyz);
 
     static vec3f_t unproject(const_handle_t handle, const vec3f_t& uvw);
 
     static vec3f_t tangent(const_handle_t handle, const Point& pnt);
 
+    static vec3f_t normal(const_handle_t handle, const Point& pnt);
+
     static float intrinsic_distance(const_handle_t handle, const vec3f_t& p0,
                                     const vec3f_t& p1);
-
-    static feature_t
-    feature(const_handle_t handle, const Point& pnt_0, const Point& pnt_1);
-
-    static discrete_feature_t
-    discretize_feature(const_handle_t handle, const feature_t& f,
-                       const feature_bounds_t& bounds,
-                       const discretization_params& params);
-
-    static bool
-    valid(const_handle_t handle, const feature_t& f, const feature_bounds_t& bounds, float min_angle, float max_angle, float min_rel_dist, float max_rel_dist);
-
-    //static std::string opencl_source();
-
-    // static vec3f_t unproject(std::shared_ptr<const state_t>& handle, const
-    // vec3f_t& uvw) {
-    //}
 };
 
 }  // namespace triplet_match

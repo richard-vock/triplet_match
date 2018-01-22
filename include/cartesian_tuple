@@ -1,0 +1,56 @@
+#ifndef _TRIPLET_MATCH_CARTESIAN_TUPLE_
+#define _TRIPLET_MATCH_CARTESIAN_TUPLE_
+
+#include "common"
+
+namespace triplet_match {
+
+template<typename T, typename... U>
+using repeat_array_t = std::array<T&, 1+sizeof...(U)>;
+
+namespace detail {
+
+template <int N, typename T, typename... Args>
+auto repeat_tuple(std::tuple<T&, Args&...> args) {
+    typedef std::tuple<T&, Args&...> tuple_t;
+    constexpr std::size_t size = std::tuple_size<tuple_t>::value;
+    if constexpr (size >= N) {
+        return args;
+    } else {
+        typedef std::tuple<T&, T&, Args&...> concat_t;
+        concat_t concat = std::tuple_cat(std::tuple<T&>(std::get<0>(args)), args);
+        return repeat_tuple<N, T, T, Args...>(concat);
+    }
+}
+
+template<typename D, std::size_t Index>
+using depend_t = D;
+
+template<typename T, std::size_t N, typename Indices = std::make_index_sequence<N>>
+struct repeat;
+
+template<typename T, std::size_t N, std::size_t... Indices>
+struct repeat<T, N, std::index_sequence<Indices...>> {
+    using type = std::tuple<depend_t<T, Indices>...>;
+
+};
+
+} // detail
+
+template <int N, typename T>
+auto repeat_tuple(T& t) {
+    return detail::repeat_tuple<N>(std::tuple<T&>(t));
+}
+
+template <int N, typename Rng>
+auto constant_cartesian(Rng& rng) {
+    return std::apply(ranges::view::cartesian_product, repeat_tuple<N, Rng>(rng));
+}
+
+template <typename T, std::size_t N>
+using repeat_t = typename detail::repeat<T,N>::type;
+
+}  // namespace triplet_match
+
+#endif /* _TRIPLET_MATCH_CARTESIAN_TUPLE_ */
+// vim: syntax=cpp:

@@ -4,7 +4,7 @@
 #include <unordered_map>
 
 #include "common"
-#include "discretize"
+#include "feature"
 #include "pointcloud"
 #include "range"
 
@@ -21,12 +21,9 @@ public:
 
     typedef Proj traits_t;
     typedef pointcloud<Point> cloud_t;
-    typedef std::pair<uint32_t, uint32_t> pair_t;
-    typedef typename Proj::discrete_feature_t discrete_feature_t;
-    typedef std::unordered_multimap<discrete_feature_t, pair_t> hash_map_t;
+    typedef std::tuple<uint32_t, uint32_t, uint32_t> result_t;
+    typedef std::unordered_multimap<discrete_feature_t, result_t> hash_map_t;
     typedef typename hash_map_t::const_iterator pair_iter_t;
-    // typedef gpu::vector<gpu::float4_> gpu_data_t;
-    // typedef std::vector<gpu::float4_> cpu_data_t;
 
 public:
     model(typename cloud_t::ConstPtr cloud, discretization_params params);
@@ -38,11 +35,7 @@ public:
     void init(const subset_t& subset, const sample_parameters& sample_params);
 
     std::pair<pair_iter_t, pair_iter_t>
-    query(const typename traits_t::feature_t& f, bool debug = false);
-
-    // typename cloud_t::Ptr
-    // instantiate(const mat4f_t& rigid, const mat4f_t& uvw_transform =
-    // mat4f_t::Identity()) const;
+    query(const feature_t& f, bool debug = false);
 
     typename Proj::handle_t projector();
 
@@ -73,17 +66,7 @@ public:
 
     typename cloud_t::ConstPtr cloud() const;
 
-    const typename Proj::feature_bounds_t& feature_bounds() const;
-
-    // gpu_data_t& device_data();
-
-    // const gpu_data_t& device_data() const;
-
-    // const cpu_data_t& host_data() const;
-
-    // void
-    // write_octave_density_maps(const std::string& folder, const std::string&
-    // data_file_prefix, const std::string& script_file) const;
+    const feature_bounds_t& feature_bounds() const;
 
 protected:
     struct impl;

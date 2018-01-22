@@ -1,4 +1,5 @@
 INSTANTIATE_POINT_PROJECTOR_TYPE(cylinder_traits<pcl::PointSurfel>, pcl::PointSurfel)
 INSTANTIATE_POINT_PROJECTOR_TYPE(plane_traits<pcl::PointSurfel>, pcl::PointSurfel)
+INSTANTIATE_POINT_PROJECTOR_TYPE(plane2_traits<pcl::PointSurfel>, pcl::PointSurfel)
 INSTANTIATE_POINT_PROJECTOR_TYPE(identity_traits<pcl::PointSurfel>, pcl::PointSurfel)
 #undef INSTANTIATE_POINT_PROJECTOR_TYPE

@@ -1,5 +1,5 @@
-#ifndef _TRIPLET_MATCH_IDENTITY_TRAITS_
-#define _TRIPLET_MATCH_IDENTITY_TRAITS_
+#ifndef _TRIPLET_MATCH_PLANE2_TRAITS_
+#define _TRIPLET_MATCH_PLANE2_TRAITS_
 
 #include "common"
 #include "discretize"
@@ -9,15 +9,18 @@
 namespace triplet_match {
 
 template <typename Point>
-struct identity_traits {
+struct plane2_traits {
     typedef pointcloud<Point> cloud_t;
     struct state_t {
-        bbox3_t uvw_bounds;
+        float threshold;
+        vec3f_t origin;
+        mat4f_t g2l;
+        mat4f_t l2g;
     };
     typedef std::shared_ptr<state_t> handle_t;
     typedef std::shared_ptr<const state_t> const_handle_t;
 
-    static constexpr int sample_count = 1;
+    static constexpr int sample_count = 3;
 
     typedef repeat_t<Point, sample_count> samples_t;
 
@@ -42,8 +45,8 @@ struct identity_traits {
 }  // namespace triplet_match
 
 #ifndef TRIPLET_MATCH_PRECOMPILE_HEADERS
-#include "impl/identity_traits.hpp"
+#include "impl/plane2_traits.hpp"
 #endif  // TRIPLET_MATCH_PRECOMPILE_HEADERS
 
-#endif /* _TRIPLET_MATCH_IDENTITY_TRAITS_ */
+#endif /* _TRIPLET_MATCH_PLANE2_TRAITS_ */
 // vim: syntax=cpp:

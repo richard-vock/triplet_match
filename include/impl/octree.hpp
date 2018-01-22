@@ -79,6 +79,9 @@ octree<Point>::impl::create(typename cloud_t::ConstPtr cloud,
     }
     bbox_ = bbox;
 
+    pdebug("level 0 index count: {}", indices.size());
+    pdebug("level 0 bbox min: {}", bbox.min().transpose());
+    pdebug("level 0 bbox max: {}", bbox.max().transpose());
     std::tie(depth_, root_) = impl::subdivide(cloud, indices, bbox, crit, max_depth);
 }
 

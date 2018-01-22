@@ -33,14 +33,14 @@ public:
     virtual ~scene();
 
     match_t
-    find(model<Proj, Point>& m, uint32_t early_out_threshold,
+    find(model<Proj, Point>& m, float dist_thres, uint32_t early_out_threshold,
          const sample_parameters& sample_params, const subset_t& sample_candidates = subset_t());
 
     std::vector<match_t>
-    find_all(model<Proj, Point>& m, float octree_diameter_factor, float model_match_factor, float early_out_factor, const sample_parameters& sample_params, uint32_t max_icp_iterations, bool only_first = false);
+    find_all(model<Proj, Point>& m, float dist_thres, float octree_diameter_factor, float model_match_factor, float early_out_factor, const sample_parameters& sample_params, uint32_t max_icp_iterations, bool only_first = false, subset_t* firsts = nullptr);
 
     typename cloud_t::Ptr
-    instantiate(model<Proj, Point>& m, const match_t& match);
+    instantiate(model<Proj, Point>& m, const match_t& match, bool instantiate_all = false);
 
     typename cloud_t::ConstPtr cloud() const;
 

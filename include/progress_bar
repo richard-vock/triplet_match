@@ -1,0 +1,24 @@
+#ifndef _TRIPLET_MATCH_PROGRESS_BAR_
+#define _TRIPLET_MATCH_PROGRESS_BAR_
+
+#include <string>
+#include <fmt/format.h>
+
+namespace triplet_match {
+
+class progress_bar {
+public:
+    progress_bar(std::string prefix, int width = 20);
+    void poll(float progress);
+    void poll(unsigned int done, unsigned int todo);
+    void finish();
+
+protected:
+    std::string prefix_;
+    int  steps_;
+    int  width_;
+};
+
+} // triplet_match
+
+#endif /* _TRIPLET_MATCH_PROGRESS_BAR_ */

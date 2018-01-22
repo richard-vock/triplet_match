@@ -3,6 +3,7 @@
 
 #include <cylinder_traits>
 #include <plane_traits>
+#include <plane2_traits>
 #include <identity_traits>
 
 namespace triplet_match {

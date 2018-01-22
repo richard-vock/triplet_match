@@ -28,6 +28,8 @@ namespace act = ranges::action;
 
 namespace triplet_match {
 
+constexpr bool scale_invariant = false;
+
 namespace gpu = boost::compute;
 
 typedef Eigen::Vector2f vec2f_t;

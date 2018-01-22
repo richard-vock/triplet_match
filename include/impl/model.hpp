@@ -43,9 +43,16 @@ struct model<Proj,Point>::impl {
         uvw_cloud_ = cloud_t::empty();
         for (auto idx : subset_) {
             Point uvw_pnt;
-            uvw_pnt.getVector3fMap() = traits_t::project(proj_, cloud_->points[idx].getVector3fMap());
+            std::optional<vec3f_t> projected = traits_t::project(proj_, cloud_->points[idx].getVector3fMap());
+            if (!projected) {
+                continue;
+            }
+            uvw_pnt.getVector3fMap() = *projected;
+            uvw_pnt.getNormalVector3fMap() = traits_t::normal(proj_, cloud_->points[idx]);
+            vec3f_t tgt = traits_t::tangent(proj_, cloud_->points[idx]);
+            tangent(uvw_pnt) = tgt;
             uvw_cloud_->push_back(uvw_pnt);
-            uvw_bounds_.extend(uvw_cloud_->points[idx].getVector3fMap());
+            uvw_bounds_.extend(*projected);
         }
         uvw_res_ = uvw_cloud_->resolution();
         vec3f_t lower = uvw_bounds_.min();
@@ -93,47 +100,91 @@ struct model<Proj,Point>::impl {
             vec3f_t tgt = vec3f_t(cloud_->points[idx].data_c[1], cloud_->points[idx].data_c[2], cloud_->points[idx].data_c[3]);
             return tgt.norm() > 0.7f;
         }) | ranges::to_vector;
-        for (auto && [i, j] : vw::cartesian_product(subset_, subset_)) {
-            if (i==j) continue;
+        auto triplets = vw::cartesian_product(subset_, subset_, subset_);
+        float lower_bound = diameter_ * params.min_diameter_factor;
+        float upper_bound = diameter_ * params.max_diameter_factor;
+        uint32_t valid_count = 0;
+        for (auto && [i, j, k] : triplets) {
+            if (i==j || i==k || j==k) continue;
 
-            auto f = traits_t::feature(proj_, cloud_->points[i], cloud_->points[j]);
-            feat_bounds_.extend(f);
+            vec3f_t d1 = cloud_->points[j].getVector3fMap() - cloud_->points[i].getVector3fMap();
+            vec3f_t d2 = cloud_->points[k].getVector3fMap() - cloud_->points[i].getVector3fMap();
+            float dist1 = d1.norm();
+            float dist2 = d2.norm();
+            d1 /= dist1;
+            d2 /= dist2;
+            if (dist1 < lower_bound || dist2 < lower_bound || dist1 > upper_bound || dist2 > upper_bound) continue;
+            if (1.f - fabs(d1.dot(d2)) < 0.005f) continue;
+
+            auto f = feature<Proj, Point>(proj_, cloud_->points[i], cloud_->points[j], cloud_->points[k]);
+            if (!f) continue;
+            feat_bounds_.extend(*f);
+
+            ++valid_count;
         }
+
+        double valid_ratio = static_cast<double>(valid_count) / ranges::distance(triplets);
+        pdebug("valid triplet ratio: {}", valid_ratio);
+        feat_bounds_ = valid_bounds(feat_bounds_, M_PI / 10.f, 2.0*M_PI, 0.2f, 1.f);
 
         std::map<int, uint32_t> hist_0, hist_1;
-        for (auto && [i, j] : vw::cartesian_product(subset_, subset_)) {
-            if (i==j) continue;
+        for (auto && [i, j, k] : triplets) {
+            if (i==j || i==k || j==k) continue;
 
+            vec3f_t d1 = cloud_->points[j].getVector3fMap() - cloud_->points[i].getVector3fMap();
+            vec3f_t d2 = cloud_->points[k].getVector3fMap() - cloud_->points[i].getVector3fMap();
+            float dist1 = d1.norm();
+            float dist2 = d2.norm();
+            d1 /= dist1;
+            d2 /= dist2;
+            if (dist1 < lower_bound || dist2 < lower_bound || dist1 > upper_bound || dist2 > upper_bound) continue;
+            if (1.f - fabs(d1.dot(d2)) < 0.005f) continue;
             //bool debug = i == 54 && j == 313;
-            auto f = traits_t::feature(proj_, cloud_->points[i], cloud_->points[j]);
-            auto df = traits_t::discretize_feature(proj_, f, feat_bounds_, params_);
+            auto f = feature<Proj, Point>(proj_, cloud_->points[i], cloud_->points[j], cloud_->points[k]);
+            if (!f) continue;
+            auto df = discretize_feature<Proj, Point>(proj_, *f, feat_bounds_, params_);
 
-            if (traits_t::valid(proj_, f, feat_bounds_, M_PI / 10.f, 2.0*M_PI, 0.4f, 1.f)) {
-                //vec3f_t ti(cloud_->points[i].data_c[1], cloud_->points[i].data_c[2], cloud_->points[i].data_c[3]);
-                //vec3f_t tj(cloud_->points[j].data_c[1], cloud_->points[j].data_c[2], cloud_->points[j].data_c[3]);
-                //pdebug("model ti: {}, ||t_i|| = {}", ti.transpose(), ti.norm());
-                //pdebug("model tj: {}, ||t_j|| = {}", tj.transpose(), tj.norm());
-                //pdebug("model feat 1: {}", f[1]);
-                //if (debug) {
-                    //pdebug("model feat: {}", f.transpose());
-                    //pdebug("model dfeat: {}", df.transpose());
-                //}
-                map_.insert({df, pair_t{i,j}});
+            if (valid<Proj, Point>(proj_, *f, feat_bounds_)) {
+                if (hist_0.find(df[0]) == hist_0.end()) {
+                    hist_0[df[0]] = 0;
+                }
+                if (hist_1.find(df[2]) == hist_1.end()) {
+                    hist_1[df[2]] = 0;
+                }
+                hist_0[df[0]] += 1;
+                hist_1[df[2]] += 1;
+                map_.insert({df, result_t{i,j,k}});
                 used_points_.insert(i);
                 used_points_.insert(j);
+                used_points_.insert(k);
             }
         }
+
+        int max_key_0 = std::max_element(hist_0.begin(), hist_0.end(), [&] (auto a, auto b) { return a.first < b.first; })->first;
+        int max_key_1 = std::max_element(hist_1.begin(), hist_1.end(), [&] (auto a, auto b) { return a.first < b.first; })->first;
+        std::ofstream out("/tmp/out0.dat");
+        for (int i = 0; i < max_key_0; ++i) {
+            if (i) out << " ";
+            out << (hist_0.find(i) == hist_0.end() ? 0u : hist_0[i]);
+        }
+        out << "\n";
+        for (int i = 0; i < max_key_1; ++i) {
+            if (i) out << " ";
+            out << (hist_1.find(i) == hist_1.end() ? 0u : hist_1[i]);
+        }
+        out << "\n";
+        out.close();
 
         init_ = true;
     }
 
     std::pair<pair_iter_t, pair_iter_t>
-    query(const typename traits_t::feature_t& f, bool debug) {
+    query(const feature_t& f, bool debug) {
         if (!init_) {
             throw std::runtime_error("Cannot query uninitialized model");
         }
 
-        auto df = traits_t::discretize_feature(proj_, f, feat_bounds_, params_);
+        auto df = discretize_feature<Proj, Point>(proj_, f, feat_bounds_, params_);
         if (debug) {
             pdebug("scene dfeat: {}", df.transpose());
         }
@@ -173,10 +224,11 @@ struct model<Proj,Point>::impl {
 
     std::optional<float>
     voxel_distance(const vec3f_t& local) const {
-        vec3f_t uvw = Proj::project(proj_, local);
-        std::optional<uint32_t> uvw_n = voxel_query(uvw);
+        std::optional<vec3f_t> uvw = Proj::project(proj_, local);
+        if (!uvw) return std::nullopt;
+        std::optional<uint32_t> uvw_n = voxel_query(*uvw);
         if (!uvw_n) return std::nullopt;
-        return Proj::intrinsic_distance(proj_, uvw, uvw_cloud_->points[uvw_n.value()].getVector3fMap());
+        return Proj::intrinsic_distance(proj_, *uvw, uvw_cloud_->points[uvw_n.value()].getVector3fMap());
     }
 
     float diameter() const {
@@ -207,44 +259,10 @@ struct model<Proj,Point>::impl {
         return cloud_;
     }
 
-    const typename Proj::feature_bounds_t&
+    const feature_bounds_t&
     feature_bounds() const {
         return feat_bounds_;
     }
-
-    //vec3i_t from_linear(const vec3i_t& ijk) {
-        //return ijk[2] * extents_[0] * extents_[1] + ijk[1] * extents_[0] + ijk[0];
-    //}
-
-    //typename cloud_t::Ptr
-    //instantiate(const mat4f_t& rigid, const mat4f_t& uvw_transform) const {
-        //mat4f_t inv_norm = normalize_.inverse();
-
-        //typename cloud_t::Ptr result(new cloud_t());
-        //result->resize(cloud_->size());
-        //for (uint32_t idx = 0; idx < cloud_->size(); ++idx) {
-            //vec4f_t p = cloud_->points[idx].getVector3fMap().homogeneous();
-
-            //// project into normalized uvw space
-            //p.head(3) = projector_.project(p.head(3));
-            //p = normalize_ * p;
-
-            //// distort
-            //p = uvw_transform * p;
-
-            //vec3f_t unnorm = (inv_norm * p).head(3);
-
-            //// unproject
-            //p.head(3) = projector_.unproject(unnorm);
-
-            //// rigid transform into scene
-            //p = rigid * p;
-
-            //result->points[idx].getVector3fMap() = p.head(3);
-        //}
-
-        //return result;
-    //}
 
     typename cloud_t::ConstPtr cloud_;
     typename cloud_t::Ptr uvw_cloud_;
@@ -259,7 +277,7 @@ struct model<Proj,Point>::impl {
     vec3i_t extents_;
     int margin_;
     bbox3_t uvw_bounds_;
-    typename Proj::feature_bounds_t feat_bounds_;
+    feature_bounds_t feat_bounds_;
     mat4f_t uvw_to_voxel_;
     float uvw_res_;
     uint64_t pair_count_;
@@ -293,15 +311,9 @@ model<Proj,Point>::init(const subset_t& subset, const sample_parameters& sample_
 
 template <typename Proj, typename Point>
 inline std::pair<typename model<Proj,Point>::pair_iter_t, typename model<Proj,Point>::pair_iter_t>
-model<Proj,Point>::query(const typename traits_t::feature_t& f, bool debug) {
+model<Proj,Point>::query(const feature_t& f, bool debug) {
     return range<pair_iter_t>(impl_->query(f, debug));
 }
-
-//template <typename Proj, typename Point>
-//inline typename model<Proj,Point>::cloud_t::Ptr
-//model<Proj,Point>::instantiate(const mat4f_t& rigid, const mat4f_t& uvw_transform) const {
-    //return impl_->instantiate(rigid, uvw_transform);
-//}
 
 template <typename Proj, typename Point>
 inline typename Proj::handle_t
@@ -326,12 +338,6 @@ inline typename model<Proj,Point>::cloud_t::ConstPtr
 model<Proj,Point>::uvw_cloud() const {
     return impl_->uvw_cloud();
 }
-
-//template <typename Proj, typename Point>
-//inline const mat4f_t&
-//model<Proj,Point>::uvw_to_voxel() const {
-    //return impl_->uvw_to_voxel();
-//}
 
 template <typename Proj, typename Point>
 inline std::optional<uint32_t>
@@ -388,86 +394,9 @@ model<Proj,Point>::cloud() const {
 }
 
 template <typename Proj, typename Point>
-inline const typename Proj::feature_bounds_t&
+inline const feature_bounds_t&
 model<Proj,Point>::feature_bounds() const {
     return impl_->feature_bounds();
 }
-
-//template <typename Proj, typename Point>
-//inline typename model<Proj,Point>::gpu_data_t&
-//model<Proj,Point>::device_data() {
-    //return impl_->device_data();
-//}
-
-//template <typename Proj, typename Point>
-//inline const typename model<Proj,Point>::gpu_data_t&
-//model<Proj,Point>::device_data() const {
-    //return impl_->device_data();
-//}
-
-//template <typename Proj, typename Point>
-//inline const typename model<Proj,Point>::cpu_data_t&
-//model<Proj,Point>::host_data() const {
-    //return impl_->host_data();
-//}
-
-//template <typename Proj, typename Point>
-//void
-//model<Proj,Point>::write_octave_density_maps(const std::string& folder, const std::string& data_file_prefix, const std::string& script_file) const {
-//    const discretization_params& ps = impl_->params_;
-//    const hash_map_t& map = impl_->map_;
-//
-//    const float max_angle = static_cast<float>(M_PI);
-//    const uint32_t angle_count = static_cast<uint32_t>(max_angle / ps.angle_step) + 1;
-//    const uint32_t dist_count = static_cast<uint32_t>(ps.distance_step_count);
-//
-//    std::vector<std::vector<uint32_t>> hists(5);
-//    hists[0] = std::vector<uint32_t>(dist_count, 0);
-//    hists[1] = std::vector<uint32_t>(dist_count, 0);
-//    hists[2] = std::vector<uint32_t>(angle_count, 0);
-//    hists[3] = std::vector<uint32_t>(angle_count, 0);
-//    hists[4] = std::vector<uint32_t>(angle_count, 0);
-//    auto missing_dims = ranges::view::cartesian_product(
-//        ranges::view::ints(0u, dist_count),
-//        ranges::view::ints(0u, dist_count),
-//        ranges::view::ints(0u, angle_count),
-//        ranges::view::ints(0u, angle_count),
-//        ranges::view::ints(0u, angle_count)
-//    );
-//    for (auto && [a,b,c,d,e] : missing_dims) {
-//        discrete_feature feat;
-//        feat[0] = a;
-//        feat[1] = b;
-//        feat[2] = c;
-//        feat[3] = d;
-//        feat[4] = e;
-//        auto && [fst,lst] = map.equal_range(feat);
-//        uint32_t count = std::distance(fst, lst);
-//        hists[0][a] += count;
-//        hists[1][b] += count;
-//        hists[2][c] += count;
-//        hists[3][d] += count;
-//        hists[4][e] += count;
-//    }
-//
-//    auto name = [&] (uint32_t i) { return data_file_prefix + "_" + std::to_string(i); };
-//
-//    std::ofstream out;
-//    for (uint32_t i = 0; i < 5; ++i) {
-//        out.open(folder + "/" + name(i) + ".dat");
-//        for (const auto& count : hists[i]) {
-//            out << count << "\n";
-//        }
-//        out.close();
-//    }
-//
-//    out.open(folder + "/" + script_file);
-//    for (uint32_t i = 0; i < 5; ++i) {
-//        out << "load " << name(i) << ".dat" << "\n";
-//        out << "figure(" << (i+1) << ")" << "\n";
-//        out << "plot(0:numel(" << name(i) << ")-1, " << name(i) << ", '-')" << "\n";
-//    }
-//    out.close();
-//}
 
 }  // namespace triplet_match
