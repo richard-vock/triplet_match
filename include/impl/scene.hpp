@@ -1,7 +1,6 @@
 #include <random>
 #include <chrono>
 #include "timer.hpp"
-#include <boost/compute/interop/eigen.hpp>
 #include <pcl/registration/icp.h>
 #include <progress_bar>
 
@@ -18,9 +17,10 @@ constexpr float corr_dist_factor = 3.0;
 constexpr bool allow_scale = false;
 constexpr int threads_per_block = 512;
 constexpr int query_limit = 200; //disabled: -1;
-constexpr bool force_exhaustive = true;
+constexpr bool force_exhaustive = false;
 constexpr bool samples_on_all = true;
 constexpr bool final_corrs_on_all = true;
+constexpr uint32_t curvature_k = 30;
 
 }  // namespace detail
 
@@ -35,8 +35,10 @@ struct scene<Proj, Point>::impl {
     find_all(model<Proj, Point>& m, float dist_thres, float octree_diameter_factor, float model_match_factor, float early_out_factor, const sample_parameters& sample_params, uint32_t max_icp_iterations, bool only_first, subset_t* firsts) {
         subset_t tangent_indices;
         uint32_t possible_scene = 0;
+        cinfo_.resize(cloud_->size());
         for (auto && [idx, pnt] : vw::zip(vw::ints(0ul), cloud_->points)) {
-            if (tangent(pnt).norm() > 0.7f) {
+            cinfo_[idx] = cloud_->curvature(detail::curvature_k, idx);
+            if (tangent(pnt).norm() > 0.7f && (cinfo_[idx].pc_min / cinfo_[idx].pc_max) < 0.2f) {
                 tangent_indices.push_back(idx);
             }
             if (considered_correspondence_(pnt)) {
@@ -45,6 +47,7 @@ struct scene<Proj, Point>::impl {
         }
         cloud_->set_indices(tangent_indices);
         mask_ = std::vector<bool>(cloud_->size(), false);
+        fp_mask_ = std::vector<bool>(cloud_->size(), false);
         uint32_t considered = 0;
 
         std::vector<match_t> results;
@@ -193,15 +196,15 @@ struct scene<Proj, Point>::impl {
         //uint32_t progress = 0;
         //
         //pdebug("outer_bound: {} in {}", outer_bound, n_scene);
-        //progress_bar pbar("Performing RanSaC:  ");
+        progress_bar pbar("Performing RanSaC:  ");
 
-        uint32_t sample_count = 0;
-        //uint32_t progress = 0;
+        uint32_t progress = 0;
         for (auto i : outer_subset) {
+            ++progress;
             if (mask_[i]) continue;
+            if (fp_mask_[i]) continue;
+            fp_mask_[i] = true;
             const Point& p1 = cloud_->points[i];
-
-            if (++sample_count < 5) pdebug("i: {}", i);
 
             auto nn = cloud_->radius_search_inclusive(upper, p1).first;
             if (nn.empty()) continue;
@@ -271,7 +274,7 @@ struct scene<Proj, Point>::impl {
                     continue;
                 }
 
-                auto f = feature<Proj, Point>(proj, p1, p2, p3);
+                auto f = feature<Proj, Point>(proj, p1, p2, p3, cinfo_[i], cinfo_[j], cinfo_[k]);
                 if (!f) continue;
 
                 if (!valid<Proj, Point>(proj, *f, m.feature_bounds())) {
@@ -280,7 +283,7 @@ struct scene<Proj, Point>::impl {
 
                 auto && [q_first, q_last] = m.query(*f, debug);
                 if (q_first != q_last) {
-                    //pdebug("query: {}", std::distance(q_first, q_last));
+                    //pdebug("query results: {}", std::distance(q_first, q_last));
                     ++valid_query_count;
                     ++valid_samples;
                 }
@@ -318,7 +321,7 @@ struct scene<Proj, Point>::impl {
                         best_projector = proj;
 
                         if (detail::early_out && best_score >= early_out_threshold) {
-                            //pbar.finish();
+                            pbar.finish();
                             fmt::print("early out at: {} points\n", best_score);
                             return {*uvw_trans, scene_corrs_, model_corrs_, proj};
                         }
@@ -330,10 +333,12 @@ struct scene<Proj, Point>::impl {
                 }
             }
 
-            //pbar.poll(++progress, outer_bound);
+            pbar.poll(progress, outer_bound);
         }
 
-        //pbar.finish();
+        pdebug("valid sample count: {}", valid_query_count);
+
+        pbar.finish();
 
         if (best_projector) {
             project_(m, best_projector, best_uvw_trans, dist_thres);
@@ -571,9 +576,11 @@ struct scene<Proj, Point>::impl {
 
     typename cloud_t::Ptr      cloud_;
 
+    std::vector<typename pointcloud<Point>::curvature_info_t> cinfo_;
     subset_t scene_corrs_;
     subset_t model_corrs_;
     std::vector<bool> mask_;
+    std::vector<bool> fp_mask_;
 };
 
 

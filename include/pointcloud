@@ -4,6 +4,7 @@
 #include "common"
 #include <pcl/search/kdtree.h>
 #include <pcl/io/pcd_io.h>
+#include <pcl/common/eigen.h>
 #include <boost/enable_shared_from_this.hpp>
 
 namespace triplet_match {
@@ -19,6 +20,12 @@ public:
     typedef boost::shared_ptr<const pointcloud<Point>> ConstPtr;
     //using typename base_t::Ptr;
     //using typename base_t::ConstPtr;
+
+    struct curvature_info_t {
+        vec3f_t pc_max_dir;
+        float pc_min;
+        float pc_max;
+    };
 
 public:
     virtual ~pointcloud();
@@ -62,6 +69,10 @@ public:
 
     std::pair<std::vector<int>, std::vector<float>>
     radius_search_exclusive(float r, uint32_t idx) const;
+
+    curvature_info_t curvature(uint32_t k, uint32_t idx) const;
+
+    curvature_info_t curvature(float r, uint32_t idx) const;
 
     typename base_t::Ptr
     native();

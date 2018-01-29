@@ -43,7 +43,7 @@ plane_traits<Point>::init_from_model(typename cloud_t::ConstPtr cloud,
 
 template <typename Point>
 inline typename plane_traits<Point>::handle_t
-plane_traits<Point>::init_from_samples(const_handle_t model_handle,
+plane_traits<Point>::init_from_samples(const const_handle_t& model_handle,
                                        const samples_t& samples) {
     // given normals 1 point fully determines the plane - however rotation around normal is a DOF
     // since we correct for (translations and) rotations in uvw space we don't bother though
@@ -63,7 +63,7 @@ plane_traits<Point>::init_from_samples(const_handle_t model_handle,
 
 template <typename Point>
 inline std::optional<vec3f_t>
-plane_traits<Point>::project(const_handle_t handle, const vec3f_t& xyz) {
+plane_traits<Point>::project(const const_handle_t& handle, const vec3f_t& xyz) {
     vec4f_t uvw = handle->g2l * xyz.homogeneous();
     if (fabs(uvw[2]) > handle->threshold) {
         return std::nullopt;
@@ -73,27 +73,27 @@ plane_traits<Point>::project(const_handle_t handle, const vec3f_t& xyz) {
 
 template <typename Point>
 inline vec3f_t
-plane_traits<Point>::unproject(const_handle_t handle, const vec3f_t& uvw) {
+plane_traits<Point>::unproject(const const_handle_t& handle, const vec3f_t& uvw) {
     return (handle->l2g * uvw.homogeneous()).head(3);
 }
 
 template <typename Point>
 inline vec3f_t
-plane_traits<Point>::tangent(const_handle_t handle, const Point& pnt) {
+plane_traits<Point>::tangent(const const_handle_t& handle, const Point& pnt) {
     return handle->g2l.template topLeftCorner<3, 3>() *
            vec3f_t(pnt.data_c[1], pnt.data_c[2], pnt.data_c[3]);
 }
 
 template <typename Point>
 inline vec3f_t
-plane_traits<Point>::normal(const_handle_t handle, const Point& pnt) {
+plane_traits<Point>::normal(const const_handle_t& handle, const Point& pnt) {
     return (handle->g2l.template topLeftCorner<3, 3>() *
             pnt.getNormalVector3fMap()).normalized();
 }
 
 template <typename Point>
 inline float
-plane_traits<Point>::intrinsic_distance(const_handle_t handle,
+plane_traits<Point>::intrinsic_distance(const const_handle_t& handle,
                                         const vec3f_t& p0,
                                         const vec3f_t& p1) {
     return (p1 - p0).norm();

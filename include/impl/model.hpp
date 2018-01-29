@@ -88,6 +88,11 @@ struct model<Proj,Point>::impl {
             vw::ints(0, extents_[2])
         );
 
+        std::vector<typename pointcloud<Point>::curvature_info_t> curvs(cloud_->size());
+        for (uint32_t i = 0; i < cloud_->size(); ++i) {
+            curvs[i] = cloud_->curvature(30u, i);
+        }
+
         for (auto && [i,j,k] : voxels) {
             int lin = k * extents_[0] * extents_[1] + j * extents_[0] + i;
             Point uvw;
@@ -98,7 +103,7 @@ struct model<Proj,Point>::impl {
 
         subset_ = vw::filter(subset_, [&] (uint32_t idx) {
             vec3f_t tgt = vec3f_t(cloud_->points[idx].data_c[1], cloud_->points[idx].data_c[2], cloud_->points[idx].data_c[3]);
-            return tgt.norm() > 0.7f;
+            return tgt.norm() > 0.7f && (curvs[idx].pc_min / curvs[idx].pc_max) < 0.2f;
         }) | ranges::to_vector;
         auto triplets = vw::cartesian_product(subset_, subset_, subset_);
         float lower_bound = diameter_ * params.min_diameter_factor;
@@ -116,7 +121,7 @@ struct model<Proj,Point>::impl {
             if (dist1 < lower_bound || dist2 < lower_bound || dist1 > upper_bound || dist2 > upper_bound) continue;
             if (1.f - fabs(d1.dot(d2)) < 0.005f) continue;
 
-            auto f = feature<Proj, Point>(proj_, cloud_->points[i], cloud_->points[j], cloud_->points[k]);
+            auto f = feature<Proj, Point>(proj_, cloud_->points[i], cloud_->points[j], cloud_->points[k], curvs[i], curvs[j], curvs[k]);
             if (!f) continue;
             feat_bounds_.extend(*f);
 
@@ -125,7 +130,7 @@ struct model<Proj,Point>::impl {
 
         double valid_ratio = static_cast<double>(valid_count) / ranges::distance(triplets);
         pdebug("valid triplet ratio: {}", valid_ratio);
-        feat_bounds_ = valid_bounds(feat_bounds_, M_PI / 10.f, 2.0*M_PI, 0.2f, 1.f);
+        feat_bounds_ = valid_bounds(feat_bounds_, M_PI / 10.f, 2.0*M_PI, 0.0f, 1.f);
 
         std::map<int, uint32_t> hist_0, hist_1;
         for (auto && [i, j, k] : triplets) {
@@ -140,7 +145,7 @@ struct model<Proj,Point>::impl {
             if (dist1 < lower_bound || dist2 < lower_bound || dist1 > upper_bound || dist2 > upper_bound) continue;
             if (1.f - fabs(d1.dot(d2)) < 0.005f) continue;
             //bool debug = i == 54 && j == 313;
-            auto f = feature<Proj, Point>(proj_, cloud_->points[i], cloud_->points[j], cloud_->points[k]);
+            auto f = feature<Proj, Point>(proj_, cloud_->points[i], cloud_->points[j], cloud_->points[k], curvs[i], curvs[j], curvs[k]);
             if (!f) continue;
             auto df = discretize_feature<Proj, Point>(proj_, *f, feat_bounds_, params_);
 
@@ -148,11 +153,11 @@ struct model<Proj,Point>::impl {
                 if (hist_0.find(df[0]) == hist_0.end()) {
                     hist_0[df[0]] = 0;
                 }
-                if (hist_1.find(df[2]) == hist_1.end()) {
-                    hist_1[df[2]] = 0;
+                if (hist_1.find(df[6]) == hist_1.end()) {
+                    hist_1[df[6]] = 0;
                 }
                 hist_0[df[0]] += 1;
-                hist_1[df[2]] += 1;
+                hist_1[df[6]] += 1;
                 map_.insert({df, result_t{i,j,k}});
                 used_points_.insert(i);
                 used_points_.insert(j);

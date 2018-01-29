@@ -47,7 +47,7 @@ plane2_traits<Point>::init_from_model(typename cloud_t::ConstPtr cloud,
 
 template <typename Point>
 inline typename plane2_traits<Point>::handle_t
-plane2_traits<Point>::init_from_samples(const_handle_t model_handle,
+plane2_traits<Point>::init_from_samples(const const_handle_t& model_handle,
                                         const samples_t& samples) {
     vec3f_t sample1 = std::get<0>(samples).getVector3fMap();
     vec3f_t sample2 = std::get<1>(samples).getVector3fMap();
@@ -83,19 +83,19 @@ plane2_traits<Point>::init_from_samples(const_handle_t model_handle,
 
 template <typename Point>
 inline std::optional<vec3f_t>
-plane2_traits<Point>::project(const_handle_t handle, const vec3f_t& xyz) {
+plane2_traits<Point>::project(const const_handle_t& handle, const vec3f_t& xyz) {
     return (handle->g2l * xyz.homogeneous()).head(3);
 }
 
 template <typename Point>
 inline vec3f_t
-plane2_traits<Point>::unproject(const_handle_t handle, const vec3f_t& uvw) {
+plane2_traits<Point>::unproject(const const_handle_t& handle, const vec3f_t& uvw) {
     return (handle->l2g * uvw.homogeneous()).head(3);
 }
 
 template <typename Point>
 inline vec3f_t
-plane2_traits<Point>::tangent(const_handle_t handle, const Point& pnt) {
+plane2_traits<Point>::tangent(const const_handle_t& handle, const Point& pnt) {
     return (handle->g2l.template topLeftCorner<3, 3>() *
             vec3f_t(pnt.data_c[1], pnt.data_c[2], pnt.data_c[3]))
         .normalized();
@@ -103,14 +103,14 @@ plane2_traits<Point>::tangent(const_handle_t handle, const Point& pnt) {
 
 template <typename Point>
 inline vec3f_t
-plane2_traits<Point>::normal(const_handle_t handle, const Point& pnt) {
+plane2_traits<Point>::normal(const const_handle_t& handle, const Point& pnt) {
     return (handle->g2l.template topLeftCorner<3, 3>() *
             pnt.getNormalVector3fMap()).normalized();
 }
 
 template <typename Point>
 inline float
-plane2_traits<Point>::intrinsic_distance(const_handle_t handle,
+plane2_traits<Point>::intrinsic_distance(const const_handle_t& handle,
                                          const vec3f_t& p0, const vec3f_t& p1) {
     return (p1 - p0).head(2).norm();
 }

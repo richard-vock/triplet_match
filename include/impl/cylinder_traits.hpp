@@ -53,7 +53,7 @@ cylinder_traits<Point>::init_from_model(typename cloud_t::ConstPtr cloud,
 template <typename Point>
 inline typename cylinder_traits<Point>::handle_t
 cylinder_traits<Point>::init_from_samples(
-    const_handle_t model_handle, const samples_t& samples) {
+    const const_handle_t& model_handle, const samples_t& samples) {
     // given normals 2 points suffice to derive a cylinder model
     Point sample1 = std::get<0>(samples);
     Point sample2 = std::get<1>(samples);
@@ -99,7 +99,7 @@ cylinder_traits<Point>::init_from_samples(
 
 template <typename Point>
 inline std::optional<vec3f_t>
-cylinder_traits<Point>::project(const_handle_t handle, const vec3f_t& xyz) {
+cylinder_traits<Point>::project(const const_handle_t& handle, const vec3f_t& xyz) {
     vec4f_t loc = handle->g2l * xyz.homogeneous();
     vec3f_t uvw;
     float height = loc.head(2).norm() - handle->radius;
@@ -115,7 +115,7 @@ cylinder_traits<Point>::project(const_handle_t handle, const vec3f_t& xyz) {
 
 template <typename Point>
 inline vec3f_t
-cylinder_traits<Point>::unproject(const_handle_t handle, const vec3f_t& uvw) {
+cylinder_traits<Point>::unproject(const const_handle_t& handle, const vec3f_t& uvw) {
     vec4f_t loc = vec4f_t::UnitW();
     loc[2] = uvw[1];
 
@@ -131,7 +131,7 @@ cylinder_traits<Point>::unproject(const_handle_t handle, const vec3f_t& uvw) {
 
 template <typename Point>
 inline vec3f_t
-cylinder_traits<Point>::tangent(const_handle_t handle, const Point& pnt) {
+cylinder_traits<Point>::tangent(const const_handle_t& handle, const Point& pnt) {
     vec4f_t loc = handle->g2l * pnt.getVector3fMap().homogeneous();
     vec3f_t loc_t = handle->g2l.template topLeftCorner<3, 3>() *
                     vec3f_t(pnt.data_c[1], pnt.data_c[2], pnt.data_c[3]);
@@ -155,7 +155,7 @@ cylinder_traits<Point>::tangent(const_handle_t handle, const Point& pnt) {
 
 template <typename Point>
 inline vec3f_t
-cylinder_traits<Point>::normal(const_handle_t handle, const Point& pnt) {
+cylinder_traits<Point>::normal(const const_handle_t& handle, const Point& pnt) {
     vec3f_t glb_t_1 = vec3f_t(pnt.data_c[1], pnt.data_c[2], pnt.data_c[3]);
     vec3f_t glb_t_2 = glb_t_1.cross(pnt.getNormalVector3fMap()).normalized();
     vec4f_t loc = handle->g2l * pnt.getVector3fMap().homogeneous();
@@ -179,7 +179,7 @@ cylinder_traits<Point>::normal(const_handle_t handle, const Point& pnt) {
 
 template <typename Point>
 inline float
-cylinder_traits<Point>::intrinsic_distance(const_handle_t handle,
+cylinder_traits<Point>::intrinsic_distance(const const_handle_t& handle,
                                            const vec3f_t& p0,
                                            const vec3f_t& p1) {
     float d_u = fabs(p1[0] - p0[0]);

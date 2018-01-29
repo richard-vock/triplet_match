@@ -30,17 +30,17 @@ struct cylinder_traits {
     init_from_model(typename cloud_t::ConstPtr cloud,
                     const subset_t& subset = subset_t());
 
-    static handle_t init_from_samples(const_handle_t model_handle, const samples_t& samples);
+    static handle_t init_from_samples(const const_handle_t& model_handle, const samples_t& samples);
 
-    static std::optional<vec3f_t> project(const_handle_t handle, const vec3f_t& xyz);
+    static std::optional<vec3f_t> project(const const_handle_t& handle, const vec3f_t& xyz);
 
-    static vec3f_t unproject(const_handle_t handle, const vec3f_t& uvw);
+    static vec3f_t unproject(const const_handle_t& handle, const vec3f_t& uvw);
 
-    static vec3f_t tangent(const_handle_t handle, const Point& pnt);
+    static vec3f_t tangent(const const_handle_t& handle, const Point& pnt);
 
-    static vec3f_t normal(const_handle_t handle, const Point& pnt);
+    static vec3f_t normal(const const_handle_t& handle, const Point& pnt);
 
-    static float intrinsic_distance(const_handle_t handle, const vec3f_t& p0,
+    static float intrinsic_distance(const const_handle_t& handle, const vec3f_t& p0,
                                     const vec3f_t& p1);
 };
 

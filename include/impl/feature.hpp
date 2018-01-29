@@ -4,8 +4,7 @@ using triplet_match::vec3f_t;
 
 inline float
 angle(const vec3f_t& a, const vec3f_t& b) {
-    vec3f_t c = a.cross(b);
-    return atan2f(c.norm(), a.dot(b));
+    return atan2f(a.cross(b).norm(), fabs(a.dot(b)));
 }
 
 } // anon namespace
@@ -15,7 +14,7 @@ namespace triplet_match {
 template <typename Proj, typename Point>
 inline std::optional<feature_t>
 feature(typename Proj::const_handle_t handle, const Point& pnt_0,
-                             const Point& pnt_1, const Point& pnt_2) {
+                             const Point& pnt_1, const Point& pnt_2, const curv_info_t<Point>& crv_0, const curv_info_t<Point>& crv_1, const curv_info_t<Point>& crv_2) {
     // planes use the same features as cylinders (or all "pseudo-2d-embeddings" for that matter)
     // i.e. intrinsic distance (in this case simple euclidean L2) and intrinsic tangent angles (with w=0)
     std::optional<vec3f_t> uvw_0 = Proj::project(handle, pnt_0.getVector3fMap());
@@ -51,6 +50,11 @@ feature(typename Proj::const_handle_t handle, const Point& pnt_0,
         feat[3] = angle(d1, tgt_1);
         feat[4] = angle(d2, tgt_2);
         feat[5] = angle(d3, tgt_0);
+        vec3f_t nrm = d1.cross(d3);
+        feat[6] = angle(nrm, vec3f_t::UnitZ());
+        //feat[6] = crv_0.pc_max < Eigen::NumTraits<float>::dummy_precision() ? 1.f : crv_0.pc_min / crv_0.pc_max;
+        //feat[7] = crv_1.pc_max < Eigen::NumTraits<float>::dummy_precision() ? 1.f : crv_1.pc_min / crv_1.pc_max;
+        //feat[8] = crv_2.pc_max < Eigen::NumTraits<float>::dummy_precision() ? 1.f : crv_2.pc_min / crv_2.pc_max;
     //}
 
     // this changes norm which is irrelevant for the following
@@ -87,7 +91,11 @@ discretize_feature(typename Proj::const_handle_t handle, const feature_t& f, con
             discretize(f[2], bounds.min()[2], bounds.diagonal()[2], params.distance_step_count),
             discretize(f[3], params.angle_step),
             discretize(f[4], params.angle_step),
-            discretize(f[5], params.angle_step);
+            discretize(f[5], params.angle_step),
+            discretize(f[6], params.angle_step);
+            //discretize(f[6], bounds.min()[6], bounds.diagonal()[6], params.curvature_ratio_step_count),
+            //discretize(f[7], bounds.min()[7], bounds.diagonal()[7], params.curvature_ratio_step_count),
+            //discretize(f[8], bounds.min()[8], bounds.diagonal()[8], params.curvature_ratio_step_count);
     //}
     return df;
 }
@@ -107,13 +115,24 @@ valid(typename Proj::const_handle_t handle, const feature_t& f, const feature_bo
         }
     //}
 
+    //if (f[6] < bounds.min()[6] || f[6] > bounds.max()[6]) {
+        //return false;
+    //}
+    //if (f[7] < bounds.min()[7] || f[7] > bounds.max()[7]) {
+        //return false;
+    //}
+    //if (f[8] < bounds.min()[8] || f[8] > bounds.max()[8]) {
+        //return false;
+    //}
+
     float pi = static_cast<float>(M_PI);
     bool angle_ok = true;
     //if constexpr (scale_invariant) {
         //angle_ok = (f[1] >= 0.f && f[1] <= pi) && (f[2] >= 0.f && f[2] <= pi) && (f[3] >= 0.f && f[3] <= pi);
     //} else {
         //angle_ok = f[3] >= 0.f && f[3] <= pi;
-        angle_ok = (f[3] >= 0.f && f[3] <= pi) && (f[4] >= 0.f && f[4] <= pi) && (f[5] >= 0.f && f[5] <= pi);
+        angle_ok = (f[3] >= 0.f && f[3] <= pi) && (f[4] >= 0.f && f[4] <= pi) && (f[5] >= 0.f && f[5] <= pi) && (f[6] >= 0.f && f[6] <= pi);
+    if (!angle_ok) pdebug("not valid angle");
     //}
 
     //if (!angle_ok) pdebug("angles {} {} {}", f[1], f[2], f[3]);

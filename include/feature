@@ -3,17 +3,23 @@
 
 #include "common"
 #include "discretize"
+#include "pointcloud"
 
 namespace triplet_match {
 
-static constexpr int feature_dimension = 6;
+static constexpr int feature_dimension = 7;
 typedef Eigen::Matrix<float, feature_dimension, 1> feature_t;
 typedef Eigen::Matrix<uint32_t, feature_dimension, 1> discrete_feature_t;
 typedef Eigen::AlignedBox<float, feature_dimension> feature_bounds_t;
 
+template <typename Point>
+using curv_info_t = typename pointcloud<Point>::curvature_info_t;
+
 template <typename Proj, typename Point>
 std::optional<feature_t>
-feature(typename Proj::const_handle_t handle, const Point& pnt_0, const Point& pnt_1, const Point& pnt_2);
+feature(typename Proj::const_handle_t handle, const Point& pnt_0,
+        const Point& pnt_1, const Point& pnt_2, const curv_info_t<Point>& crv_0,
+        const curv_info_t<Point>& crv_1, const curv_info_t<Point>& crv_2);
 
 template <typename Proj, typename Point>
 discrete_feature_t
@@ -22,11 +28,12 @@ discretize_feature(typename Proj::const_handle_t handle, const feature_t& f,
                    const discretization_params& params);
 
 template <typename Proj, typename Point>
-bool
-valid(typename Proj::const_handle_t handle, const feature_t& f, const feature_bounds_t& bounds);
+bool valid(typename Proj::const_handle_t handle, const feature_t& f,
+           const feature_bounds_t& bounds);
 
 feature_bounds_t
-valid_bounds(const feature_bounds_t& bounds, float min_angle, float max_angle, float min_rel_dist, float max_rel_dist);
+valid_bounds(const feature_bounds_t& bounds, float min_angle, float max_angle,
+             float min_rel_dist, float max_rel_dist);
 
 }  // namespace triplet_match
 

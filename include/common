@@ -15,8 +15,6 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 
-#include <boost/compute.hpp>
-
 #include <fmt/format.h>
 #include <fmt/ostream.h>
 
@@ -29,8 +27,6 @@ namespace act = ranges::action;
 namespace triplet_match {
 
 constexpr bool scale_invariant = false;
-
-namespace gpu = boost::compute;
 
 typedef Eigen::Vector2f vec2f_t;
 typedef Eigen::RowVector2f rvec2f_t;
@@ -68,16 +64,6 @@ inline pcl::Vector3fMap
 tangent(pcl::PointSurfel& pnt) {
     return pcl::Vector3fMap (&(pnt.data_c[1]));
 }
-
-struct gpu_state {
-    typedef std::shared_ptr<gpu_state> sptr_t;
-
-    gpu_state();
-
-    gpu::device device;
-    gpu::context context;
-    gpu::command_queue queue;
-};
 
 struct sample_parameters {
     float min_triplet_ratio;

@@ -8,6 +8,7 @@ namespace triplet_match {
 struct discretization_params {
     float distance_step_count;
     float angle_step;
+    float curvature_ratio_step_count;
 };
 
 uint32_t

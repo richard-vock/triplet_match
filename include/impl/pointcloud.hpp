@@ -1,6 +1,49 @@
 namespace triplet_match {
 
 template <typename Point>
+inline typename pointcloud<Point>::curvature_info_t
+principal_curvatures(const pointcloud<Point>& cloud, uint32_t p_idx, const std::vector<int> &indices) {
+    mat3f_t I = mat3f_t::Identity();
+    vec3f_t n_idx  = cloud.points[p_idx].getNormalVector3fMap();;
+    mat3f_t M = I - n_idx * n_idx.transpose();
+
+    std::vector<vec3f_t> proj_normals(indices.size());
+    vec3f_t centroid = vec3f_t::Zero();
+    for (size_t idx = 0; idx < indices.size(); ++idx) {
+        proj_normals[idx] = M * cloud.points[indices[idx]].getNormalVector3fMap();
+        centroid += (proj_normals[idx] - centroid) / (idx+1);
+    }
+
+    mat3f_t cov = mat3f_t::Zero();
+    for (size_t idx = 0; idx < indices.size (); ++idx) {
+        vec3f_t demean = proj_normals[idx] - centroid;
+
+        double demean_xy = demean[0] * demean[1];
+        double demean_xz = demean[0] * demean[2];
+        double demean_yz = demean[1] * demean[2];
+
+        cov(0, 0) += demean[0] * demean[0];
+        cov(0, 1) += static_cast<float> (demean_xy);
+        cov(0, 2) += static_cast<float> (demean_xz);
+
+        cov(1, 0) += static_cast<float> (demean_xy);
+        cov(1, 1) += demean[1] * demean[1];
+        cov(1, 2) += static_cast<float> (demean_yz);
+
+        cov(2, 0) += static_cast<float> (demean_xz);
+        cov(2, 1) += static_cast<float> (demean_yz);
+        cov(2, 2) += demean[2] * demean[2];
+    }
+
+    vec3f_t evs, evec;
+    pcl::eigen33 (cov, evs);
+    pcl::computeCorrespondingEigenVector (cov, evs [2], evec);
+
+    float area_inv = 1.0f / static_cast<float>(indices.size());
+    return {evec, evs[1] * area_inv, evs[2] * area_inv};
+}
+
+template <typename Point>
 inline
 pointcloud<Point>::~pointcloud() {
 }
@@ -111,7 +154,7 @@ pointcloud<Point>::knn_inclusive(uint32_t k, uint32_t idx) const {
 template <typename Point>
 inline std::pair<std::vector<int>, std::vector<float>>
 pointcloud<Point>::knn_exclusive(uint32_t k, const Point& point) const {
-    auto && [is, ds] = knn_inclusive(k, point);
+    auto && [is, ds] = knn_inclusive(k+1, point);
     std::vector<int> is_ex = vw::tail(is) | ranges::to_vector;
     std::vector<float> ds_ex = vw::tail(ds) | ranges::to_vector;
     return {is_ex, ds_ex};
@@ -152,6 +195,18 @@ template <typename Point>
 inline std::pair<std::vector<int>, std::vector<float>>
 pointcloud<Point>::radius_search_exclusive(float r, uint32_t idx) const {
     return radius_search_exclusive(r, this->points[idx]);
+}
+
+template <typename Point>
+inline typename pointcloud<Point>::curvature_info_t
+pointcloud<Point>::curvature(uint32_t k, uint32_t idx) const {
+    return principal_curvatures(*this, idx, knn_inclusive(k, idx).first);
+}
+
+template <typename Point>
+inline typename pointcloud<Point>::curvature_info_t
+pointcloud<Point>::curvature(float r, uint32_t idx) const {
+    return principal_curvatures(*this, idx, radius_search_inclusive(r, idx).first);
 }
 
 template <typename Point>

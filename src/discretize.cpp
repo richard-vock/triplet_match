@@ -12,6 +12,7 @@ template uint32_t murmur<5>(const Eigen::Matrix<uint32_t, 5, 1>& key);
 template uint32_t murmur<6>(const Eigen::Matrix<uint32_t, 6, 1>& key);
 template uint32_t murmur<7>(const Eigen::Matrix<uint32_t, 7, 1>& key);
 template uint32_t murmur<8>(const Eigen::Matrix<uint32_t, 8, 1>& key);
+template uint32_t murmur<9>(const Eigen::Matrix<uint32_t, 9, 1>& key);
 
 }  // namespace detail
 
@@ -40,5 +41,6 @@ template struct hash<::Eigen::Matrix<uint32_t, 5, 1>>;
 template struct hash<::Eigen::Matrix<uint32_t, 6, 1>>;
 template struct hash<::Eigen::Matrix<uint32_t, 7, 1>>;
 template struct hash<::Eigen::Matrix<uint32_t, 8, 1>>;
+template struct hash<::Eigen::Matrix<uint32_t, 9, 1>>;
 
 } // namespace std
