@@ -20,7 +20,7 @@ public:
     typedef pointcloud<Point> cloud_t;
     typedef octree<Point> octree_t;
 
-    typedef std::tuple<mat4f_t, subset_t, subset_t> match_t;
+    typedef std::tuple<mat4f_t, subset_t> match_t;
 
     struct statistics {
         double rejection_rate;
@@ -37,6 +37,9 @@ public:
 
     std::vector<match_t>
     find_all(model<Point>& m, float dist_thres, float octree_diameter_factor, float model_match_factor, float early_out_factor, const sample_parameters& sample_params, uint32_t max_icp_iterations, bool only_first = false, subset_t* firsts = nullptr);
+
+    std::vector<match_t>
+    find_all_parallel(model<Point>& m, float dist_thres, float model_match_factor, float early_out_factor, const sample_parameters& sample_params, uint32_t max_icp_iterations);
 
     typename cloud_t::Ptr
     instantiate(model<Point>& m, const match_t& match, bool instantiate_all = false);
