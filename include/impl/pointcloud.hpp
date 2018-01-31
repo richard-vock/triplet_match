@@ -237,7 +237,7 @@ pointcloud<Point>::build_tree_() const {
         indices = pcl::IndicesPtr(
             new std::vector<int>(subset_.begin(), subset_.end()));
     }
-    tree_ = typename tree_t::Ptr(new tree_t());
+    tree_ = typename tree_t::Ptr(new tree_t(false));
     tree_->setInputCloud(this->shared_from_this(), indices);
 }
 

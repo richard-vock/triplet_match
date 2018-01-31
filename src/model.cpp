@@ -1,15 +1,10 @@
 #include <model>
 #include <impl/model.hpp>
 
-#include <cylinder_traits>
-#include <plane_traits>
-#include <plane2_traits>
-#include <identity_traits>
-
 namespace triplet_match {
 
-#define INSTANTIATE_POINT_PROJECTOR_TYPE(proj, pnt) \
-    template class model<proj, pnt>;
-#include "points_projectors_cartesian.def"
+#define INSTANTIATE_PCL_POINT_TYPE(pnt) \
+    template class model<pnt>;
+#include "pcl_point_types.def"
 
 }  // namespace triplet_match

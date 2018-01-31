@@ -11,98 +11,56 @@ angle(const vec3f_t& a, const vec3f_t& b) {
 
 namespace triplet_match {
 
-template <typename Proj, typename Point>
+template <typename Point>
 inline std::optional<feature_t>
-feature(typename Proj::const_handle_t handle, const Point& pnt_0,
-                             const Point& pnt_1, const Point& pnt_2, const curv_info_t<Point>& crv_0, const curv_info_t<Point>& crv_1, const curv_info_t<Point>& crv_2) {
+feature(const Point& pnt_0,
+        const Point& pnt_1, const Point& pnt_2, const curv_info_t<Point>& crv_0, const curv_info_t<Point>& crv_1, const curv_info_t<Point>& crv_2) {
     // planes use the same features as cylinders (or all "pseudo-2d-embeddings" for that matter)
     // i.e. intrinsic distance (in this case simple euclidean L2) and intrinsic tangent angles (with w=0)
-    std::optional<vec3f_t> uvw_0 = Proj::project(handle, pnt_0.getVector3fMap());
-    std::optional<vec3f_t> uvw_1 = Proj::project(handle, pnt_1.getVector3fMap());
-    std::optional<vec3f_t> uvw_2 = Proj::project(handle, pnt_2.getVector3fMap());
-
-    if (!uvw_0 || !uvw_1 || !uvw_2) return std::nullopt;
-
-    vec3f_t tgt_0 = Proj::tangent(handle, pnt_0);
-    vec3f_t tgt_1 = Proj::tangent(handle, pnt_1);
-    vec3f_t tgt_2 = Proj::tangent(handle, pnt_2);
+    vec3f_t p0 = pnt_0.getVector3fMap();
+    vec3f_t p1 = pnt_1.getVector3fMap();
+    vec3f_t p2 = pnt_2.getVector3fMap();
+    vec3f_t tgt_0 = tangent(pnt_0);
+    vec3f_t tgt_1 = tangent(pnt_1);
+    vec3f_t tgt_2 = tangent(pnt_2);
 
     feature_t feat;
-    //if constexpr (scale_invariant) {
-        //feat[0] = Proj::intrinsic_distance(handle, *uvw_0, *uvw_2) / Proj::intrinsic_distance(handle, *uvw_0, *uvw_1);
-
-        //vec3f_t d1 = (*uvw_1) - (*uvw_0);
-        //vec3f_t d2 = (*uvw_2) - (*uvw_0);
-        //vec3f_t d3 = (*uvw_2) - (*uvw_1);
-        //vec3f_t c1 = d1.cross(d2);
-        //vec3f_t c2 = (-d1).cross(d3);
-        //vec3f_t c3 = (-d2).cross(-d3);
-        //feat[1] = atan2f(c1.norm(), d1.dot(d2));
-        //feat[2] = atan2f(c2.norm(), (-d1).dot(d3));
-        //feat[3] = atan2f(c3.norm(), (-d2).dot(-d3));
-    //} else {
-        vec3f_t d1 = (*uvw_1) - (*uvw_0);
-        vec3f_t d2 = (*uvw_2) - (*uvw_1);
-        vec3f_t d3 = (*uvw_0) - (*uvw_2);
-        feat[0] = Proj::intrinsic_distance(handle, *uvw_0, *uvw_1);
-        feat[1] = Proj::intrinsic_distance(handle, *uvw_0, *uvw_2);
-        feat[2] = Proj::intrinsic_distance(handle, *uvw_1, *uvw_2);
-        feat[3] = angle(d1, tgt_1);
-        feat[4] = angle(d2, tgt_2);
-        feat[5] = angle(d3, tgt_0);
-        vec3f_t nrm = d1.cross(d3);
-        feat[6] = angle(nrm, vec3f_t::UnitZ());
+    vec3f_t d0 = p1 - p0;
+    vec3f_t d1 = p2 - p1;
+    vec3f_t d2 = p0 - p2;
+    feat[0] = d0.norm();
+    feat[1] = d2.norm();
+    feat[2] = d1.norm();
+    feat[3] = angle(d0, tgt_1);
+    feat[4] = angle(d1, tgt_2);
+    feat[5] = angle(d2, tgt_0);
+    vec3f_t nrm = d1.cross(d2);
+    feat[6] = angle(nrm, vec3f_t::UnitZ());
         //feat[6] = crv_0.pc_max < Eigen::NumTraits<float>::dummy_precision() ? 1.f : crv_0.pc_min / crv_0.pc_max;
         //feat[7] = crv_1.pc_max < Eigen::NumTraits<float>::dummy_precision() ? 1.f : crv_1.pc_min / crv_1.pc_max;
         //feat[8] = crv_2.pc_max < Eigen::NumTraits<float>::dummy_precision() ? 1.f : crv_2.pc_min / crv_2.pc_max;
-    //}
-
-    // this changes norm which is irrelevant for the following
-    // angle computation thanks to atan2(y, x) ~ atan(y/x) = atan(ky/kx)
-    /* plane2
-    tgt_0[2] = 0.f;
-    tgt_1[2] = 0.f;
-    tgt_2[2] = 0.f;
-    vec3f_t c1 = tgt_0.cross(tgt_1);
-    vec3f_t c2 = tgt_0.cross(tgt_2);
-    vec3f_t c3 = tgt_1.cross(tgt_2);
-    feat[1] = atan2f(c1.norm(), tgt_0.dot(tgt_1));
-    feat[2] = atan2f(c2.norm(), tgt_0.dot(tgt_2));
-    feat[3] = atan2f(c3.norm(), tgt_1.dot(tgt_2));
-    */
 
     return feat;
 }
 
-template <typename Proj, typename Point>
+template <typename Point>
 inline discrete_feature_t
-discretize_feature(typename Proj::const_handle_t handle, const feature_t& f, const feature_bounds_t& bounds, const discretization_params& params) {
+discretize_feature(const feature_t& f, const feature_bounds_t& bounds, const discretization_params& params) {
     discrete_feature_t df;
-    //if constexpr (scale_invariant) {
-        //df <<
-            //discretize(f[0], bounds.min()[0], bounds.diagonal()[0], params.distance_step_count),
-            //discretize(f[1], params.angle_step),
-            //discretize(f[2], params.angle_step),
-            //discretize(f[3], params.angle_step);
-    //} else {
-        df <<
-            discretize(f[0], bounds.min()[0], bounds.diagonal()[0], params.distance_step_count),
-            discretize(f[1], bounds.min()[1], bounds.diagonal()[1], params.distance_step_count),
-            discretize(f[2], bounds.min()[2], bounds.diagonal()[2], params.distance_step_count),
-            discretize(f[3], params.angle_step),
-            discretize(f[4], params.angle_step),
-            discretize(f[5], params.angle_step),
-            discretize(f[6], params.angle_step);
-            //discretize(f[6], bounds.min()[6], bounds.diagonal()[6], params.curvature_ratio_step_count),
-            //discretize(f[7], bounds.min()[7], bounds.diagonal()[7], params.curvature_ratio_step_count),
-            //discretize(f[8], bounds.min()[8], bounds.diagonal()[8], params.curvature_ratio_step_count);
-    //}
+    df <<
+        discretize(f[0], bounds.min()[0], bounds.diagonal()[0], params.distance_step_count),
+        discretize(f[1], bounds.min()[1], bounds.diagonal()[1], params.distance_step_count),
+        discretize(f[2], bounds.min()[2], bounds.diagonal()[2], params.distance_step_count),
+        discretize(f[3], params.angle_step),
+        discretize(f[4], params.angle_step),
+        discretize(f[5], params.angle_step),
+        discretize(f[6], params.angle_step);
     return df;
 }
 
-template <typename Proj, typename Point>
+template <typename Point>
 inline bool
-valid(typename Proj::const_handle_t handle, const feature_t& f, const feature_bounds_t& bounds) {
+valid(const feature_t& f, const feature_bounds_t& bounds) {
     if (f[0] < bounds.min()[0] || f[0] > bounds.max()[0]) {
         return false;
     }

@@ -15,20 +15,20 @@ typedef Eigen::AlignedBox<float, feature_dimension> feature_bounds_t;
 template <typename Point>
 using curv_info_t = typename pointcloud<Point>::curvature_info_t;
 
-template <typename Proj, typename Point>
+template <typename Point>
 std::optional<feature_t>
-feature(typename Proj::const_handle_t handle, const Point& pnt_0,
+feature(const Point& pnt_0,
         const Point& pnt_1, const Point& pnt_2, const curv_info_t<Point>& crv_0,
         const curv_info_t<Point>& crv_1, const curv_info_t<Point>& crv_2);
 
-template <typename Proj, typename Point>
+template <typename Point>
 discrete_feature_t
-discretize_feature(typename Proj::const_handle_t handle, const feature_t& f,
+discretize_feature(const feature_t& f,
                    const feature_bounds_t& bounds,
                    const discretization_params& params);
 
-template <typename Proj, typename Point>
-bool valid(typename Proj::const_handle_t handle, const feature_t& f,
+template <typename Point>
+bool valid(const feature_t& f,
            const feature_bounds_t& bounds);
 
 feature_bounds_t

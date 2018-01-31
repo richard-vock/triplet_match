@@ -8,10 +8,10 @@
 
 namespace triplet_match {
 
-#define INSTANTIATE_POINT_PROJECTOR_TYPE(proj, pnt) \
-    template std::optional<feature_t> feature<proj, pnt>(typename proj::const_handle_t, const pnt&, const pnt&, const pnt&, const curv_info_t<pnt>&, const curv_info_t<pnt>&, const curv_info_t<pnt>&); \
-    template discrete_feature_t discretize_feature<proj, pnt>(typename proj::const_handle_t, const feature_t&, const feature_bounds_t&, const discretization_params&); \
-    template bool valid<proj, pnt>(typename proj::const_handle_t handle, const feature_t& f, const feature_bounds_t& bounds);
-#include "points_projectors_cartesian.def"
+#define INSTANTIATE_PCL_POINT_TYPE(pnt) \
+    template std::optional<feature_t> feature<pnt>(const pnt&, const pnt&, const pnt&, const curv_info_t<pnt>&, const curv_info_t<pnt>&, const curv_info_t<pnt>&); \
+    template discrete_feature_t discretize_feature<pnt>(const feature_t&, const feature_bounds_t&, const discretization_params&); \
+    template bool valid<pnt>(const feature_t& f, const feature_bounds_t& bounds);
+#include "pcl_point_types.def"
 
 }  // namespace triplet_match

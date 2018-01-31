@@ -10,16 +10,15 @@
 
 namespace triplet_match {
 
-template <typename Proj, typename Point>
+template <typename Point>
 class model {
 public:
-    typedef std::unique_ptr<model<Proj, Point>> uptr_t;
-    typedef std::shared_ptr<model<Proj, Point>> sptr_t;
-    typedef std::weak_ptr<model<Proj, Point>> wptr_t;
-    typedef std::shared_ptr<const model<Proj, Point>> const_sptr_t;
-    typedef std::weak_ptr<const model<Proj, Point>> const_wptr_t;
+    typedef std::unique_ptr<model<Point>> uptr_t;
+    typedef std::shared_ptr<model<Point>> sptr_t;
+    typedef std::weak_ptr<model<Point>> wptr_t;
+    typedef std::shared_ptr<const model<Point>> const_sptr_t;
+    typedef std::weak_ptr<const model<Point>> const_wptr_t;
 
-    typedef Proj traits_t;
     typedef pointcloud<Point> cloud_t;
     typedef std::tuple<uint32_t, uint32_t, uint32_t> result_t;
     typedef std::unordered_multimap<discrete_feature_t, result_t> hash_map_t;
@@ -37,20 +36,10 @@ public:
     std::pair<pair_iter_t, pair_iter_t>
     query(const feature_t& f, bool debug = false);
 
-    typename Proj::handle_t projector();
-
-    typename Proj::const_handle_t projector() const;
-
-    typename cloud_t::Ptr uvw_cloud();
-
-    typename cloud_t::ConstPtr uvw_cloud() const;
-
-    // const mat4f_t& uvw_to_voxel() const;
-
     std::optional<uint32_t>
-    voxel_query(const vec3f_t& local, bool debug = false) const;
+    voxel_query(const vec4f_t& local, bool debug = false) const;
 
-    std::optional<float> voxel_distance(const vec3f_t& local) const;
+    //std::optional<float> voxel_distance(const vec3f_t& local) const;
 
     float diameter() const;
 
@@ -59,8 +48,6 @@ public:
     const vec3i_t& extents() const;
 
     int margin() const;
-
-    float uvw_resolution() const;
 
     uint64_t pair_count() const;
 

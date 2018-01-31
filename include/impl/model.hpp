@@ -5,8 +5,8 @@
 
 namespace triplet_match {
 
-template <typename Proj, typename Point>
-struct model<Proj,Point>::impl {
+template <typename Point>
+struct model<Point>::impl {
     impl(typename cloud_t::ConstPtr cloud, discretization_params params) : cloud_(cloud), params_(params), init_(false) {
     }
 
@@ -29,8 +29,6 @@ struct model<Proj,Point>::impl {
             return finite;
         }) | ranges::to_vector;
 
-        proj_ = Proj::init_from_model(cloud_, subset);
-
         s_params_ = params;
 
         bbox3_t bbox;
@@ -40,26 +38,11 @@ struct model<Proj,Point>::impl {
         }
         diameter_ = (bbox.max() - bbox.min()).norm();
 
-        uvw_cloud_ = cloud_t::empty();
-        for (auto idx : subset_) {
-            Point uvw_pnt;
-            std::optional<vec3f_t> projected = traits_t::project(proj_, cloud_->points[idx].getVector3fMap());
-            if (!projected) {
-                continue;
-            }
-            uvw_pnt.getVector3fMap() = *projected;
-            uvw_pnt.getNormalVector3fMap() = traits_t::normal(proj_, cloud_->points[idx]);
-            vec3f_t tgt = traits_t::tangent(proj_, cloud_->points[idx]);
-            tangent(uvw_pnt) = tgt;
-            uvw_cloud_->push_back(uvw_pnt);
-            uvw_bounds_.extend(*projected);
-        }
-        uvw_res_ = uvw_cloud_->resolution();
-        vec3f_t lower = uvw_bounds_.min();
-        vec3f_t upper = uvw_bounds_.max();
+        vec3f_t lower = bbox.min();
+        vec3f_t upper = bbox.max();
         vec3f_t range = upper-lower;
 
-        vec3f_t ext = (uvw_bounds_.diagonal() / uvw_res_)
+        vec3f_t ext = (bbox.diagonal() / cloud_->resolution())
             .cwiseMax(vec3f_t::Constant(1.f));
 
         margin_ = 5;
@@ -70,14 +53,14 @@ struct model<Proj,Point>::impl {
             range[0] < Eigen::NumTraits<float>::dummy_precision() ? 1.f : ext[0] / range[0],
             range[1] < Eigen::NumTraits<float>::dummy_precision() ? 1.f : ext[1] / range[1],
             range[2] < Eigen::NumTraits<float>::dummy_precision() ? 1.f : ext[2] / range[2]);
-        uvw_to_voxel_ = mat4f_t::Identity();
-        uvw_to_voxel_.block<3, 3>(0, 0) = scale.asDiagonal();
-        uvw_to_voxel_.block<3, 1>(0, 3) = uvw_to_voxel_.template block<3, 3>(0, 0) * (-uvw_bounds_.min())
+        to_voxel_ = mat4f_t::Identity();
+        to_voxel_.block<3, 3>(0, 0) = scale.asDiagonal();
+        to_voxel_.block<3, 1>(0, 3) = to_voxel_.template block<3, 3>(0, 0) * (-bbox.min())
                                 + vec3f_t::Constant(static_cast<float>(margin_));
         // subvoxel-shift
-        uvw_to_voxel_.template block<3, 1>(0, 3) -= vec3f_t::Constant(0.5f);
+        to_voxel_.template block<3, 1>(0, 3) -= vec3f_t::Constant(0.5f);
 
-        mat4f_t inv = uvw_to_voxel_.inverse();
+        mat4f_t inv = to_voxel_.inverse();
 
         uint32_t voxel_count = extents_[0] * extents_[1] * extents_[2];
         voxel_data_.resize(voxel_count);
@@ -97,7 +80,7 @@ struct model<Proj,Point>::impl {
             int lin = k * extents_[0] * extents_[1] + j * extents_[0] + i;
             Point uvw;
             uvw.getVector3fMap() = (inv * vec4f_t(i, j, k, 1.f)).head(3);
-            auto is = uvw_cloud_->knn_inclusive(1, uvw).first;
+            auto is = cloud_->knn_inclusive(1, uvw).first;
             voxel_data_[lin] = is[0];
         }
 
@@ -121,7 +104,7 @@ struct model<Proj,Point>::impl {
             if (dist1 < lower_bound || dist2 < lower_bound || dist1 > upper_bound || dist2 > upper_bound) continue;
             if (1.f - fabs(d1.dot(d2)) < 0.005f) continue;
 
-            auto f = feature<Proj, Point>(proj_, cloud_->points[i], cloud_->points[j], cloud_->points[k], curvs[i], curvs[j], curvs[k]);
+            auto f = feature<Point>(cloud_->points[i], cloud_->points[j], cloud_->points[k], curvs[i], curvs[j], curvs[k]);
             if (!f) continue;
             feat_bounds_.extend(*f);
 
@@ -145,11 +128,11 @@ struct model<Proj,Point>::impl {
             if (dist1 < lower_bound || dist2 < lower_bound || dist1 > upper_bound || dist2 > upper_bound) continue;
             if (1.f - fabs(d1.dot(d2)) < 0.005f) continue;
             //bool debug = i == 54 && j == 313;
-            auto f = feature<Proj, Point>(proj_, cloud_->points[i], cloud_->points[j], cloud_->points[k], curvs[i], curvs[j], curvs[k]);
+            auto f = feature<Point>(cloud_->points[i], cloud_->points[j], cloud_->points[k], curvs[i], curvs[j], curvs[k]);
             if (!f) continue;
-            auto df = discretize_feature<Proj, Point>(proj_, *f, feat_bounds_, params_);
+            auto df = discretize_feature<Point>(*f, feat_bounds_, params_);
 
-            if (valid<Proj, Point>(proj_, *f, feat_bounds_)) {
+            if (valid<Point>(*f, feat_bounds_)) {
                 if (hist_0.find(df[0]) == hist_0.end()) {
                     hist_0[df[0]] = 0;
                 }
@@ -189,33 +172,14 @@ struct model<Proj,Point>::impl {
             throw std::runtime_error("Cannot query uninitialized model");
         }
 
-        auto df = discretize_feature<Proj, Point>(proj_, f, feat_bounds_, params_);
-        if (debug) {
-            pdebug("scene dfeat: {}", df.transpose());
-        }
+        auto df = discretize_feature<Point>(f, feat_bounds_, params_);
 
         return map_.equal_range(df);
     }
 
-    typename Proj::handle_t projector() {
-        return proj_;
-    }
-
-    typename Proj::const_handle_t projector() const {
-        return proj_;
-    }
-
-    typename cloud_t::Ptr uvw_cloud() {
-        return uvw_cloud_;
-    }
-
-    typename cloud_t::ConstPtr uvw_cloud() const {
-        return uvw_cloud_;
-    }
-
     std::optional<uint32_t>
-    voxel_query(const vec3f_t& uvw, bool debug = false) const {
-        vec4i_t ijk = (uvw_to_voxel_ * uvw.homogeneous()).template cast<int>();
+    voxel_query(const vec4f_t& pos, bool debug = false) const {
+        vec4i_t ijk = (to_voxel_ * pos).template cast<int>();
         int i = ijk[0];
         int j = ijk[1];
         int k = ijk[2];
@@ -227,14 +191,14 @@ struct model<Proj,Point>::impl {
         return voxel_data_[lin];
     }
 
-    std::optional<float>
-    voxel_distance(const vec3f_t& local) const {
-        std::optional<vec3f_t> uvw = Proj::project(proj_, local);
-        if (!uvw) return std::nullopt;
-        std::optional<uint32_t> uvw_n = voxel_query(*uvw);
-        if (!uvw_n) return std::nullopt;
-        return Proj::intrinsic_distance(proj_, *uvw, uvw_cloud_->points[uvw_n.value()].getVector3fMap());
-    }
+    //std::optional<float>
+    //voxel_distance(const vec3f_t& local) const {
+        //std::optional<vec3f_t> uvw = Proj::project(proj_, local);
+        //if (!uvw) return std::nullopt;
+        //std::optional<uint32_t> uvw_n = voxel_query(*uvw);
+        //if (!uvw_n) return std::nullopt;
+        //return Proj::intrinsic_distance(proj_, *uvw, uvw_cloud_->points[uvw_n.value()].getVector3fMap());
+    //}
 
     float diameter() const {
         return diameter_;
@@ -246,10 +210,6 @@ struct model<Proj,Point>::impl {
 
     int margin() const {
         return margin_;
-    }
-
-    float uvw_resolution() const {
-        return uvw_res_;
     }
 
     uint32_t point_count() const {
@@ -270,8 +230,6 @@ struct model<Proj,Point>::impl {
     }
 
     typename cloud_t::ConstPtr cloud_;
-    typename cloud_t::Ptr uvw_cloud_;
-    typename traits_t::handle_t proj_;
     discretization_params params_;
     bool init_;
 
@@ -281,126 +239,118 @@ struct model<Proj,Point>::impl {
     float diameter_;
     vec3i_t extents_;
     int margin_;
-    bbox3_t uvw_bounds_;
     feature_bounds_t feat_bounds_;
-    mat4f_t uvw_to_voxel_;
-    float uvw_res_;
+    mat4f_t to_voxel_;
     uint64_t pair_count_;
     subset_t voxel_data_;
     std::set<uint32_t> used_points_;
 };
 
 
-template <typename Proj, typename Point>
+template <typename Point>
 inline
-model<Proj,Point>::model(typename cloud_t::ConstPtr cloud, discretization_params params) {
+model<Point>::model(typename cloud_t::ConstPtr cloud, discretization_params params) {
     impl_ = std::make_unique<impl>(cloud, params);
 }
 
-template <typename Proj, typename Point>
+template <typename Point>
 inline
-model<Proj,Point>::~model() {
+model<Point>::~model() {
 }
 
-template <typename Proj, typename Point>
+template <typename Point>
 inline void
-model<Proj,Point>::init(const sample_parameters& sample_params) {
+model<Point>::init(const sample_parameters& sample_params) {
     impl_->init(subset_t(), sample_params);
 }
 
-template <typename Proj, typename Point>
+template <typename Point>
 inline void
-model<Proj,Point>::init(const subset_t& subset, const sample_parameters& sample_params) {
+model<Point>::init(const subset_t& subset, const sample_parameters& sample_params) {
     impl_->init(subset, sample_params);
 }
 
-template <typename Proj, typename Point>
-inline std::pair<typename model<Proj,Point>::pair_iter_t, typename model<Proj,Point>::pair_iter_t>
-model<Proj,Point>::query(const feature_t& f, bool debug) {
+template <typename Point>
+inline std::pair<typename model<Point>::pair_iter_t, typename model<Point>::pair_iter_t>
+model<Point>::query(const feature_t& f, bool debug) {
     return range<pair_iter_t>(impl_->query(f, debug));
 }
 
-template <typename Proj, typename Point>
-inline typename Proj::handle_t
-model<Proj,Point>::projector() {
-    return impl_->projector();
-}
+//template <typename Point>
+//inline typename Proj::handle_t
+//model<Proj,Point>::projector() {
+    //return impl_->projector();
+//}
 
-template <typename Proj, typename Point>
-inline typename Proj::const_handle_t
-model<Proj,Point>::projector() const {
-    return impl_->projector();
-}
+//template <typename Point>
+//inline typename Proj::const_handle_t
+//model<Proj,Point>::projector() const {
+    //return impl_->projector();
+//}
 
-template <typename Proj, typename Point>
-inline typename model<Proj,Point>::cloud_t::Ptr
-model<Proj,Point>::uvw_cloud() {
-    return impl_->uvw_cloud();
-}
+//template <typename Point>
+//inline typename model<Proj,Point>::cloud_t::Ptr
+//model<Proj,Point>::uvw_cloud() {
+    //return impl_->uvw_cloud();
+//}
 
-template <typename Proj, typename Point>
-inline typename model<Proj,Point>::cloud_t::ConstPtr
-model<Proj,Point>::uvw_cloud() const {
-    return impl_->uvw_cloud();
-}
+//template <typename Point>
+//inline typename model<Proj,Point>::cloud_t::ConstPtr
+//model<Proj,Point>::uvw_cloud() const {
+    //return impl_->uvw_cloud();
+//}
 
-template <typename Proj, typename Point>
+template <typename Point>
 inline std::optional<uint32_t>
-model<Proj,Point>::voxel_query(const vec3f_t& uvw, bool debug) const {
+model<Point>::voxel_query(const vec4f_t& uvw, bool debug) const {
     return impl_->voxel_query(uvw, debug);
 }
 
-template <typename Proj, typename Point>
-inline std::optional<float>
-model<Proj,Point>::voxel_distance(const vec3f_t& local) const {
-    return impl_->voxel_distance(local);
-}
+//template <typename Point>
+//inline std::optional<float>
+//model<Proj,Point>::voxel_distance(const vec3f_t& local) const {
+    //return impl_->voxel_distance(local);
+//}
 
-template <typename Proj, typename Point>
+template <typename Point>
 inline float
-model<Proj,Point>::diameter() const {
+model<Point>::diameter() const {
     return impl_->diameter();
 }
 
-template <typename Proj, typename Point>
+template <typename Point>
 inline uint32_t
-model<Proj,Point>::point_count() const {
+model<Point>::point_count() const {
     return impl_->point_count();
 }
 
-template <typename Proj, typename Point>
+template <typename Point>
 inline const vec3i_t&
-model<Proj,Point>::extents() const {
+model<Point>::extents() const {
     return impl_->extents();
 }
 
-template <typename Proj, typename Point>
+template <typename Point>
 inline int
-model<Proj,Point>::margin() const {
+model<Point>::margin() const {
     return impl_->margin();
 }
 
-template <typename Proj, typename Point>
-inline float
-model<Proj,Point>::uvw_resolution() const {
-    return impl_->uvw_resolution();
-}
-
-template <typename Proj, typename Point>
+template <typename Point>
 inline uint64_t
-model<Proj,Point>::pair_count() const {
+model<Point>::pair_count() const {
     return impl_->pair_count();
 }
 
-template <typename Proj, typename Point>
-inline typename model<Proj,Point>::cloud_t::ConstPtr
-model<Proj,Point>::cloud() const {
+template <typename Point>
+inline typename model<Point>::cloud_t::ConstPtr
+model<Point>::cloud() const {
     return impl_->cloud();
 }
 
-template <typename Proj, typename Point>
+template <typename Point>
 inline const feature_bounds_t&
-model<Proj,Point>::feature_bounds() const {
+model<Point>::feature_bounds() const {
     return impl_->feature_bounds();
 }
 
