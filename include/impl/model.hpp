@@ -88,47 +88,41 @@ struct model<Point>::impl {
             vec3f_t tgt = vec3f_t(cloud_->points[idx].data_c[1], cloud_->points[idx].data_c[2], cloud_->points[idx].data_c[3]);
             return tgt.norm() > 0.7f && (curvs[idx].pc_min / curvs[idx].pc_max) < 0.2f;
         }) | ranges::to_vector;
-        auto triplets = vw::cartesian_product(subset_, subset_, subset_);
+        auto pairs = vw::cartesian_product(subset_, subset_);
         float lower_bound = diameter_ * params.min_diameter_factor;
         float upper_bound = diameter_ * params.max_diameter_factor;
         uint32_t valid_count = 0;
-        for (auto && [i, j, k] : triplets) {
-            if (i==j || i==k || j==k) continue;
+        for (auto && [i, j] : pairs) {
+            if (i==j) continue;
 
             vec3f_t d1 = cloud_->points[j].getVector3fMap() - cloud_->points[i].getVector3fMap();
-            vec3f_t d2 = cloud_->points[k].getVector3fMap() - cloud_->points[i].getVector3fMap();
             float dist1 = d1.norm();
-            float dist2 = d2.norm();
             d1 /= dist1;
-            d2 /= dist2;
-            if (dist1 < lower_bound || dist2 < lower_bound || dist1 > upper_bound || dist2 > upper_bound) continue;
-            if (1.f - fabs(d1.dot(d2)) < 0.005f) continue;
+            if (dist1 < lower_bound || dist1 > upper_bound) continue;
+            if (1.f - fabs(d1.dot(tangent(cloud_->points[i]))) < 0.01f) continue;
 
-            auto f = feature<Point>(cloud_->points[i], cloud_->points[j], cloud_->points[k], curvs[i], curvs[j], curvs[k]);
+            auto f = feature<Point>(cloud_->points[i], cloud_->points[j], curvs[i], curvs[j]);
             if (!f) continue;
             feat_bounds_.extend(*f);
 
             ++valid_count;
         }
 
-        double valid_ratio = static_cast<double>(valid_count) / ranges::distance(triplets);
-        pdebug("valid triplet ratio: {}", valid_ratio);
+        double valid_ratio = static_cast<double>(valid_count) / ranges::distance(pairs);
+        pdebug("valid pair ratio: {}", valid_ratio);
         feat_bounds_ = valid_bounds(feat_bounds_, M_PI / 10.f, 2.0*M_PI, 0.0f, 1.f);
 
         std::map<int, uint32_t> hist_0, hist_1;
-        for (auto && [i, j, k] : triplets) {
-            if (i==j || i==k || j==k) continue;
+        for (auto && [i, j] : pairs) {
+            if (i==j) continue;
 
             vec3f_t d1 = cloud_->points[j].getVector3fMap() - cloud_->points[i].getVector3fMap();
-            vec3f_t d2 = cloud_->points[k].getVector3fMap() - cloud_->points[i].getVector3fMap();
             float dist1 = d1.norm();
-            float dist2 = d2.norm();
             d1 /= dist1;
-            d2 /= dist2;
-            if (dist1 < lower_bound || dist2 < lower_bound || dist1 > upper_bound || dist2 > upper_bound) continue;
-            if (1.f - fabs(d1.dot(d2)) < 0.005f) continue;
+            if (dist1 < lower_bound || dist1 > upper_bound) continue;
+            if (1.f - fabs(d1.dot(tangent(cloud_->points[i]))) < 0.01f) continue;
             //bool debug = i == 54 && j == 313;
-            auto f = feature<Point>(cloud_->points[i], cloud_->points[j], cloud_->points[k], curvs[i], curvs[j], curvs[k]);
+            auto f = feature<Point>(cloud_->points[i], cloud_->points[j], curvs[i], curvs[j]);
             if (!f) continue;
             auto df = discretize_feature<Point>(*f, feat_bounds_, params_);
 
@@ -136,15 +130,14 @@ struct model<Point>::impl {
                 if (hist_0.find(df[0]) == hist_0.end()) {
                     hist_0[df[0]] = 0;
                 }
-                if (hist_1.find(df[6]) == hist_1.end()) {
-                    hist_1[df[6]] = 0;
+                if (hist_1.find(df[1]) == hist_1.end()) {
+                    hist_1[df[1]] = 0;
                 }
                 hist_0[df[0]] += 1;
-                hist_1[df[6]] += 1;
-                map_.insert({df, result_t{i,j,k}});
+                hist_1[df[1]] += 1;
+                map_.insert({df, result_t{i,j}});
                 used_points_.insert(i);
                 used_points_.insert(j);
-                used_points_.insert(k);
             }
         }
 

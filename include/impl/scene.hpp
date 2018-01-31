@@ -12,7 +12,7 @@ namespace detail {
 //constexpr uint32_t random_kernel_size = 100;
 constexpr bool early_out = true;
 constexpr bool deterministic = false;
-constexpr double match_probability = 0.99;
+constexpr double match_probability = 0.999;
 constexpr uint64_t min_sample_count = 10ull;
 constexpr float corr_dist_factor = 3.0;
 constexpr bool allow_scale = false;
@@ -179,32 +179,24 @@ struct scene<Point>::impl {
             if (detail::force_exhaustive) {
                 inner_bound = nn.size();
             }
-            inner_bound *= inner_bound;
             //pdebug("progress: {} / {} (inner_bound^2: {})", ++progress, outer_bound, inner_bound);
             //pdebug("inner bound: {},  p: {} / {} = {}", inner_bound, n_model, nn.size(), prob);
 
             std::vector<int> inner0(nn.begin(), nn.end());
-            std::vector<int> inner1(nn.begin(), nn.end());
             inner0 |= act::shuffle(rng);
-            inner1 |= act::shuffle(rng);
 
             uint32_t valid_samples = 0;
-            for (auto && [j, k] : vw::cartesian_product(inner0, inner1)) {
-                if (!tangent_mask_[j] || !tangent_mask_[k] || mask_[j] || mask_[k] || i == static_cast<uint32_t>(j) || i == static_cast<uint32_t>(k) || j == k) continue;
+            for (auto j : inner0) {
+                if (!tangent_mask_[j] || mask_[j] || i == static_cast<uint32_t>(j)) continue;
                 const Point& p2 = cloud_->points[j];
-                const Point& p3 = cloud_->points[k];
 
                 vec3f_t d0 = p2.getVector3fMap() - p1.getVector3fMap();
                 float sqn0 = d0.squaredNorm();
                 d0.normalize();
                 if (sqn0 < lower || sqn0 > upper) continue;
-                vec3f_t d1 = p3.getVector3fMap() - p1.getVector3fMap();
-                float sqn1 = d1.squaredNorm();
-                d1.normalize();
-                if (sqn1 < lower || sqn1 > upper) continue;
-                if (fabs(d0.dot(d1)) > 0.8f) continue;
+                if (1.f - fabs(d0.dot(tangent(p1))) < 0.01f) continue;
 
-                auto f = feature<Point>(p1, p2, p3, cinfo_[i], cinfo_[j], cinfo_[k]);
+                auto f = feature<Point>(p1, p2, cinfo_[i], cinfo_[j]);
                 if (!f || !valid<Point>(*f, m.feature_bounds())) {
                     continue;
                 }
@@ -218,12 +210,11 @@ struct scene<Point>::impl {
                 uint32_t query = 0;
                 for (auto it = q_first; it != q_last; ++it) {
                     if (detail::query_limit > 0 && (++query) > detail::query_limit) break;
-                    auto && [m_i, m_j, m_k] = it->second;
+                    auto && [m_i, m_j] = it->second;
                     vec3f_t p_m_i = m.cloud()->points[m_i].getVector3fMap();
                     vec3f_t p_m_j = m.cloud()->points[m_j].getVector3fMap();
-                    vec3f_t p_m_k = m.cloud()->points[m_k].getVector3fMap();
 
-                    mat4f_t t = base_transform_(p1.getVector3fMap(), p2.getVector3fMap(), p3.getVector3fMap(), p_m_i, p_m_j, p_m_k);
+                    mat4f_t t = base_transform_(p1.getVector3fMap(), p2.getVector3fMap(), tangent(p1), p_m_i, p_m_j, tangent(m.cloud()->points[m_i]));
 
                     if (project_(m, nn, t, accept_prob, dist_thres, true)) {
                         ++pruned;
@@ -351,14 +342,14 @@ struct scene<Point>::impl {
         return false;
     }
 
-    mat4f_t base_transform_(const vec3f_t& src_i, const vec3f_t& src_j, const vec3f_t& src_k, const vec3f_t& tgt_i, const vec3f_t& tgt_j, const vec3f_t& tgt_k, bool debug = false) {
+    mat4f_t base_transform_(const vec3f_t& src_i, const vec3f_t& src_j, const vec3f_t& src_t, const vec3f_t& tgt_i, const vec3f_t& tgt_j, const vec3f_t& tgt_t, bool debug = false) {
         vec3f_t o_a = src_i;
         vec3f_t o_b = tgt_i;
 
         vec3f_t u_a = src_j - o_a;
-        vec3f_t v_a = src_k - o_a;
         vec3f_t u_b = tgt_j - o_b;
-        vec3f_t v_b = tgt_k - o_b;
+        vec3f_t v_a = src_t;
+        vec3f_t v_b = tgt_t;
 
         if constexpr (!scale_invariant) {
             u_a.normalize();

@@ -20,7 +20,7 @@ public:
     typedef std::weak_ptr<const model<Point>> const_wptr_t;
 
     typedef pointcloud<Point> cloud_t;
-    typedef std::tuple<uint32_t, uint32_t, uint32_t> result_t;
+    typedef std::tuple<uint32_t, uint32_t> result_t;
     typedef std::unordered_multimap<discrete_feature_t, result_t> hash_map_t;
     typedef typename hash_map_t::const_iterator pair_iter_t;
 

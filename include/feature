@@ -7,7 +7,7 @@
 
 namespace triplet_match {
 
-static constexpr int feature_dimension = 7;
+static constexpr int feature_dimension = 4;
 typedef Eigen::Matrix<float, feature_dimension, 1> feature_t;
 typedef Eigen::Matrix<uint32_t, feature_dimension, 1> discrete_feature_t;
 typedef Eigen::AlignedBox<float, feature_dimension> feature_bounds_t;
@@ -18,8 +18,8 @@ using curv_info_t = typename pointcloud<Point>::curvature_info_t;
 template <typename Point>
 std::optional<feature_t>
 feature(const Point& pnt_0,
-        const Point& pnt_1, const Point& pnt_2, const curv_info_t<Point>& crv_0,
-        const curv_info_t<Point>& crv_1, const curv_info_t<Point>& crv_2);
+        const Point& pnt_1, const curv_info_t<Point>& crv_0,
+        const curv_info_t<Point>& crv_1);
 
 template <typename Point>
 discrete_feature_t
