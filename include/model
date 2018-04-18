@@ -10,6 +10,8 @@
 
 namespace triplet_match {
 
+constexpr int voxel_multiplicity = 1;
+
 template <typename Point>
 class model {
 public:
@@ -23,6 +25,7 @@ public:
     typedef std::tuple<uint32_t, uint32_t> result_t;
     typedef std::unordered_multimap<discrete_feature_t, result_t> hash_map_t;
     typedef typename hash_map_t::const_iterator pair_iter_t;
+    typedef std::array<uint32_t, voxel_multiplicity> voxel_data_t;
 
 public:
     model(typename cloud_t::ConstPtr cloud, discretization_params params);
@@ -36,7 +39,7 @@ public:
     std::pair<pair_iter_t, pair_iter_t>
     query(const feature_t& f, bool debug = false);
 
-    std::optional<uint32_t>
+    std::optional<voxel_data_t>
     voxel_query(const vec4f_t& local, bool debug = false) const;
 
     //std::optional<float> voxel_distance(const vec3f_t& local) const;
@@ -47,11 +50,13 @@ public:
 
     const vec3i_t& extents() const;
 
+    const mat4f_t& voxel_transform() const;
+
     int margin() const;
 
     uint64_t pair_count() const;
 
-    typename cloud_t::ConstPtr cloud() const;
+    const typename cloud_t::ConstPtr& cloud() const;
 
     const feature_bounds_t& feature_bounds() const;
 

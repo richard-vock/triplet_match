@@ -27,8 +27,8 @@ feature(const Point& pnt_0,
     feat[0] = d0.norm();
     feat[1] = angle(d0, tgt_0);
     feat[2] = angle(d0, tgt_1);
-    vec3f_t nrm = tgt_0.cross(tgt_1);
-    feat[3] = angle(nrm, vec3f_t::UnitZ());
+    //vec3f_t nrm = tgt_0.cross(tgt_1);
+    feat[3] = feat[0];//crv_0.pc_min / crv_0.pc_max; //angle(nrm, vec3f_t::UnitZ());
 
     return feat;
 }
@@ -41,7 +41,7 @@ discretize_feature(const feature_t& f, const feature_bounds_t& bounds, const dis
         discretize(f[0], bounds.min()[0], bounds.diagonal()[0], params.distance_step_count),
         discretize(f[1], params.angle_step),
         discretize(f[2], params.angle_step),
-        discretize(f[3], params.angle_step);
+        discretize(f[3], bounds.min()[0], bounds.diagonal()[0], params.distance_step_count);//discretize(f[3], bounds.min()[3], bounds.diagonal()[3], params.curvature_ratio_step_count);
     return df;
 }
 
@@ -51,6 +51,9 @@ valid(const feature_t& f, const feature_bounds_t& bounds) {
     if (f[0] < bounds.min()[0] || f[0] > bounds.max()[0]) {
         return false;
     }
+    //if (f[3] < bounds.min()[3] || f[3] > bounds.max()[3]) {
+        //return false;
+    //}
     //if constexpr (!scale_invariant) {
         //if (f[1] < bounds.min()[1] || f[1] > bounds.max()[1]) {
             //return false;
@@ -76,7 +79,7 @@ valid(const feature_t& f, const feature_bounds_t& bounds) {
         //angle_ok = (f[1] >= 0.f && f[1] <= pi) && (f[2] >= 0.f && f[2] <= pi) && (f[3] >= 0.f && f[3] <= pi);
     //} else {
         //angle_ok = f[3] >= 0.f && f[3] <= pi;
-        angle_ok = (f[1] >= 0.f && f[1] <= pi) && (f[2] >= 0.f && f[2] <= pi) && (f[3] >= 0.f && f[3] <= pi);
+        angle_ok = (f[1] >= 0.f && f[1] <= pi) && (f[2] >= 0.f && f[2] <= pi);// && (f[3] >= 0.f && f[3] <= pi);
     if (!angle_ok) pdebug("not valid angle");
     //}
 
@@ -91,6 +94,8 @@ valid_bounds(const feature_bounds_t& bounds, float /*min_angle*/, float /*max_an
     // distance is adjusted to relative bounds
     new_bounds.min()[0] = bounds.min()[0] + min_rel_dist * bounds.diagonal()[0];
     new_bounds.max()[0] = bounds.min()[0] + max_rel_dist * bounds.diagonal()[0];
+    new_bounds.min()[3] = bounds.min()[3] + min_rel_dist * bounds.diagonal()[3];
+    new_bounds.max()[3] = bounds.min()[3] + max_rel_dist * bounds.diagonal()[3];
     //if constexpr (!scale_invariant) {
         //new_bounds.min()[1] = bounds.min()[1] + min_rel_dist * bounds.diagonal()[1];
         //new_bounds.max()[1] = bounds.min()[1] + max_rel_dist * bounds.diagonal()[1];

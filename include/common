@@ -43,7 +43,6 @@ typedef Eigen::RowVector4i rvec4i_t;
 typedef Eigen::Matrix3f mat3f_t;
 typedef Eigen::Matrix4f mat4f_t;
 typedef Eigen::MatrixXf matf_t;
-typedef Eigen::AlignedBox<float, 3> bbox3_t;
 
 typedef Eigen::Array3f arr3f_t;
 typedef Eigen::Array3i arr3i_t;
@@ -54,6 +53,11 @@ typedef Eigen::AlignedBox<float, 3> bbox3_t;
 typedef Eigen::Quaternionf quatf_t;
 
 typedef std::vector<uint32_t> subset_t;
+
+//inline auto
+//tangent(const pcl::PointSurfel& pnt) {
+//    return pnt.getNormalVector3fMap();
+//}
 
 inline pcl::Vector3fMapConst
 tangent(const pcl::PointSurfel& pnt) {
@@ -74,6 +78,7 @@ struct sample_parameters {
     float max_diameter_factor;
     float min_orthogonality;
     float redundancy_factor;
+    bool force_up;
 };
 
 template <class... Ts>

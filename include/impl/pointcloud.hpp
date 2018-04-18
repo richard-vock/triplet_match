@@ -69,8 +69,8 @@ pointcloud<Point>::resolution() const {
     auto tree = kdtree();
     mutex_.lock();
     if (resolution_ < 0.f) {
-        constexpr uint32_t n = 30;
-        resolution_ = average(vw::sample(this->points, n) | vw::transform([&](const Point& pnt) {
+        //constexpr uint32_t n = 30;
+        resolution_ = average(vw::transform(this->points, [&](const Point& pnt) {
             std::vector<int> is(2);
             std::vector<float> ds(2);
             tree->nearestKSearch(pnt, 2, is, ds);

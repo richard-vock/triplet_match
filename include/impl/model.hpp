@@ -24,7 +24,7 @@ struct model<Point>::impl {
         subset_ = vw::filter(subset_, [&] (uint32_t idx) {
             vec3f_t pos = cloud_->points[idx].getVector3fMap();
             vec3f_t nrm = cloud_->points[idx].getNormalVector3fMap();
-            vec3f_t tgt = vec3f_t(cloud_->points[idx].data_c[1], cloud_->points[idx].data_c[2], cloud_->points[idx].data_c[3]);
+            vec3f_t tgt = tangent(cloud_->points[idx]);//vec3f_t(cloud_->points[idx].data_c[1], cloud_->points[idx].data_c[2], cloud_->points[idx].data_c[3]);
             bool finite = pos.allFinite() && nrm.allFinite() && tgt.allFinite();
             return finite;
         }) | ranges::to_vector;
@@ -42,7 +42,7 @@ struct model<Point>::impl {
         vec3f_t upper = bbox.max();
         vec3f_t range = upper-lower;
 
-        vec3f_t ext = (bbox.diagonal() / cloud_->resolution())
+        vec3f_t ext = (bbox.diagonal() / (0.5f * cloud_->resolution()))
             .cwiseMax(vec3f_t::Constant(1.f));
 
         margin_ = 5;
@@ -65,27 +65,36 @@ struct model<Point>::impl {
         uint32_t voxel_count = extents_[0] * extents_[1] * extents_[2];
         voxel_data_.resize(voxel_count);
 
-        auto voxels = vw::cartesian_product(
-            vw::ints(0, extents_[0]),
-            vw::ints(0, extents_[1]),
-            vw::ints(0, extents_[2])
-        );
-
         std::vector<typename pointcloud<Point>::curvature_info_t> curvs(cloud_->size());
         for (uint32_t i = 0; i < cloud_->size(); ++i) {
             curvs[i] = cloud_->curvature(30u, i);
         }
 
-        for (auto && [i,j,k] : voxels) {
-            int lin = k * extents_[0] * extents_[1] + j * extents_[0] + i;
-            Point uvw;
-            uvw.getVector3fMap() = (inv * vec4f_t(i, j, k, 1.f)).head(3);
-            auto is = cloud_->knn_inclusive(1, uvw).first;
-            voxel_data_[lin] = is[0];
+        /*
+        auto voxels = vw::cartesian_product(
+            vw::ints(0, extents_[0]),
+            vw::ints(0, extents_[1]),
+            vw::ints(0, extents_[2])
+        );
+        */
+
+        #pragma omp parallel for
+        for (int i = 0; i < extents_[0]; ++i) {
+            for (int j = 0; j < extents_[1]; ++j) {
+                for (int k = 0; k < extents_[2]; ++k) {
+                    int lin = k * extents_[0] * extents_[1] + j * extents_[0] + i;
+                    Point uvw;
+                    uvw.getVector3fMap() = (inv * vec4f_t(i, j, k, 1.f)).head(3);
+                    auto is = cloud_->knn_inclusive(voxel_multiplicity, uvw).first;
+                    for (int m = 0; m < voxel_multiplicity; ++m) {
+                        voxel_data_[lin][m] = is[m];
+                    }
+                }
+            }
         }
 
         subset_ = vw::filter(subset_, [&] (uint32_t idx) {
-            vec3f_t tgt = vec3f_t(cloud_->points[idx].data_c[1], cloud_->points[idx].data_c[2], cloud_->points[idx].data_c[3]);
+            vec3f_t tgt = tangent(cloud_->points[idx]);
             return tgt.norm() > 0.7f && (curvs[idx].pc_min / curvs[idx].pc_max) < 0.2f;
         }) | ranges::to_vector;
         auto pairs = vw::cartesian_product(subset_, subset_);
@@ -123,10 +132,8 @@ struct model<Point>::impl {
             if (1.f - fabs(d1.dot(tangent(cloud_->points[i]))) < 0.01f) continue;
             //bool debug = i == 54 && j == 313;
             auto f = feature<Point>(cloud_->points[i], cloud_->points[j], curvs[i], curvs[j]);
-            if (!f) continue;
-            auto df = discretize_feature<Point>(*f, feat_bounds_, params_);
-
-            if (valid<Point>(*f, feat_bounds_)) {
+            if (f && valid<Point>(*f, feat_bounds_)) {
+                auto df = discretize_feature<Point>(*f, feat_bounds_, params_);
                 if (hist_0.find(df[0]) == hist_0.end()) {
                     hist_0[df[0]] = 0;
                 }
@@ -170,7 +177,7 @@ struct model<Point>::impl {
         return map_.equal_range(df);
     }
 
-    std::optional<uint32_t>
+    std::optional<voxel_data_t>
     voxel_query(const vec4f_t& pos, bool debug = false) const {
         vec4i_t ijk = (to_voxel_ * pos).template cast<int>();
         int i = ijk[0];
@@ -201,6 +208,10 @@ struct model<Point>::impl {
         return extents_;
     }
 
+    const mat4f_t& voxel_transform() const {
+        return to_voxel_;
+    }
+
     int margin() const {
         return margin_;
     }
@@ -213,7 +224,7 @@ struct model<Point>::impl {
         return pair_count_;
     }
 
-    typename cloud_t::ConstPtr cloud() const {
+    const typename cloud_t::ConstPtr& cloud() const {
         return cloud_;
     }
 
@@ -235,7 +246,7 @@ struct model<Point>::impl {
     feature_bounds_t feat_bounds_;
     mat4f_t to_voxel_;
     uint64_t pair_count_;
-    subset_t voxel_data_;
+    std::vector<voxel_data_t> voxel_data_;
     std::set<uint32_t> used_points_;
 };
 
@@ -294,7 +305,7 @@ model<Point>::query(const feature_t& f, bool debug) {
 //}
 
 template <typename Point>
-inline std::optional<uint32_t>
+inline std::optional<typename model<Point>::voxel_data_t>
 model<Point>::voxel_query(const vec4f_t& uvw, bool debug) const {
     return impl_->voxel_query(uvw, debug);
 }
@@ -324,6 +335,12 @@ model<Point>::extents() const {
 }
 
 template <typename Point>
+inline const mat4f_t&
+model<Point>::voxel_transform() const {
+    return impl_->voxel_transform();
+}
+
+template <typename Point>
 inline int
 model<Point>::margin() const {
     return impl_->margin();
@@ -336,7 +353,7 @@ model<Point>::pair_count() const {
 }
 
 template <typename Point>
-inline typename model<Point>::cloud_t::ConstPtr
+inline const typename model<Point>::cloud_t::ConstPtr&
 model<Point>::cloud() const {
     return impl_->cloud();
 }

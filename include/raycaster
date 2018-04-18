@@ -1,0 +1,33 @@
+#ifndef RAYCASTER_HPP
+#define RAYCASTER_HPP
+
+#include <memory>
+#include <vector>
+#include "common"
+#include <optixu/optixpp_namespace.h>
+
+template <typename PointType>
+class raycaster {
+public:
+    typedef typename std::shared_ptr<raycaster<PointType>> Ptr;
+    typedef pcl::PointCloud<PointType> PointCloud;
+    typedef Eigen::Vector3f Vec3f;
+    typedef Eigen::Matrix4f Mat4f;
+    typedef std::vector<int8_t> Result;
+
+    raycaster(const PointCloud& model, const PointCloud& scene, float pointRadius = 0.01f, float depthTolerance = 0.02f);
+    ~raycaster();
+
+    void cast(const Vec3f& origin, const Mat4f& modelTransform, Result& result);
+
+private:
+    optix::Context m_optixContext;
+    optix::Transform m_modelTransform;
+    optix::Acceleration m_rootAcceleration;
+    uint32_t m_modelSize;
+};
+
+#include "raycaster.ipp"
+
+#endif // RAYCASTER_HPP
+// vim: syntax=cpp:

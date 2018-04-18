@@ -20,7 +20,13 @@ public:
     typedef pointcloud<Point> cloud_t;
     typedef octree<Point> octree_t;
 
-    typedef std::tuple<mat4f_t, subset_t> match_t;
+    typedef struct match_ {
+        mat4f_t transform;
+        subset_t scene_corrs;
+        subset_t model_corrs;
+        double signed_score;
+    } match_t;
+    //typedef std::tuple<mat4f_t, subset_t, subset_t, int32_t> match_t;
 
     struct statistics {
         double rejection_rate;
@@ -35,8 +41,8 @@ public:
     //find(model<Proj, Point>& m, float dist_thres, uint32_t early_out_threshold,
     //     const sample_parameters& sample_params, const subset_t& sample_candidates = subset_t());
 
-    std::vector<match_t>
-    find_all(model<Point>& m, float dist_thres, float octree_diameter_factor, float model_match_factor, float early_out_factor, const sample_parameters& sample_params, uint32_t max_icp_iterations, bool only_first = false, subset_t* firsts = nullptr);
+    //std::vector<match_t>
+    //find_all(model<Point>& m, float dist_thres, float octree_diameter_factor, float model_match_factor, float early_out_factor, const sample_parameters& sample_params, uint32_t max_icp_iterations, bool only_first = false, subset_t* firsts = nullptr);
 
     std::vector<match_t>
     find_all_parallel(model<Point>& m, float dist_thres, float model_match_factor, float early_out_factor, const sample_parameters& sample_params, uint32_t max_icp_iterations);
